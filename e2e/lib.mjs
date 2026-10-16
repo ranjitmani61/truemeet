@@ -14,13 +14,19 @@ const MEDIA_ARGS = ['--use-fake-device-for-media-stream', '--use-fake-ui-for-med
 const VIEWPORT = { width: 1440, height: 900 };
 
 // Replaces the Web Speech API with a recogniser that "hears" the given lines once captions start.
+// window.__say(text) makes the running recogniser hear more; window.__srLang is its language.
 const fakeSpeech = (lines) => {
+  const hear = (r, text) => r.onresult?.({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: true })] });
+  let live = null;
   window.SpeechRecognition = class {
     start() {
-      lines.forEach((text, i) => setTimeout(() => this.onresult?.({ resultIndex: 0, results: [Object.assign([{ transcript: text }], { isFinal: true })] }), 500 + i * 400));
+      live = this;
+      window.__srLang = this.lang;
+      lines.forEach((text, i) => setTimeout(() => hear(this, text), 500 + i * 400));
     }
-    stop() {}
+    stop() { if (live === this) live = null; }
   };
+  window.__say = (text) => live && hear(live, text);
 };
 
 // Replaces speech synthesis: 'stub' has one en-US voice and records what it was asked to say;

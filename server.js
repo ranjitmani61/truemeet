@@ -1,11 +1,13 @@
+#!/usr/bin/env node
 // TrueMeet server: static files + WebRTC signaling over Server-Sent Events. Zero dependencies.
 // The server never sees media. It relays signaling, and owns the few facts that need one
 // authority: who is host, who may enter, pin numbers, and a bounded catch-up buffer per room.
 import { createServer } from 'node:http';
 import { createServer as createTlsServer } from 'node:https';
-import { readFile, readFileSync } from 'node:fs';
+import { readFile, readFileSync, realpathSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
 import { fingerprint, proposalPayload, publicJwk, verify } from './public/ledger.js';
 import { GENESIS, frameShape, link, witnessPayload } from './public/witness.js';
 
@@ -428,12 +430,18 @@ export function handler(req, res) {
 const tls = process.env.TLS_CERT && { cert: readFileSync(process.env.TLS_CERT), key: readFileSync(process.env.TLS_KEY) };
 export const server = tls ? createTlsServer(tls, handler) : createServer(handler);
 
-if (import.meta.main) {
-  const port = Number(process.env.PORT ?? 3000);
+// Started as a program (node server.js, npm start, npx), not imported by the tests. import.meta.main
+// only exists from Node 24.2; without this fallback older Node exited silently, serving nothing.
+const isMain = import.meta.main ?? (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url; } catch { return false; } })();
+if (isMain) {
+  const chosen = process.env.PORT !== undefined; // a port you asked for is used or reported, never swapped
+  let port = Number(process.env.PORT ?? 3000);
   server.on('error', (e) => {
     if (e.code !== 'EADDRINUSE') throw e;
+    if (!chosen && port < 3010) return server.listen(++port); // 3000 busy on this machine: take the next free one
     console.error(`Port ${port} is already in use by another app. Start TrueMeet on a free port, e.g.:\n  PORT=${port + 100} npm start`);
     process.exit(1);
   });
-  server.listen(port, () => console.log(`TrueMeet ready on ${tls ? 'https' : 'http'}://localhost:${port}`));
+  server.once('listening', () => console.log(`TrueMeet ready on ${tls ? 'https' : 'http'}://localhost:${server.address().port}`));
+  server.listen(port);
 }

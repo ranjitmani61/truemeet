@@ -103,7 +103,7 @@ await Promise.all([liveVideo(a), liveVideo(b)]);
 // ===== 2. Real translation ====================================================================
 if (translation === true) {
   assert.equal(await a.textContent('#tlCap'), 'On-device');
-  await a.click('[data-pop="#morePop"]');
+  await a.click('#langBtn');
   await a.focus('#tlSel');
   for (let i = 0; i < 2 && (await a.inputValue('#tlSel')) !== 'es'; i++) await a.keyboard.press('ArrowDown'); // a real user gesture
   if ((await a.inputValue('#tlSel')) !== 'es') await a.selectOption('#tlSel', 'es');

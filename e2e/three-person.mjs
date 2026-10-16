@@ -16,7 +16,7 @@ await a.keyboard.press('a');
 assert.ok(await a.isVisible('#autoChip'), 'Auto-Mode chip shown');
 await openPanel(a, 'people');
 await a.check('#waitToggle');
-assert.match(await a.textContent('#tlCap'), /On-device|Not supported/, 'translation capability badge');
+assert.match(await a.textContent('#tlCap'), /On-device|Dictionary only/, 'translation capability badge');
 assert.match(await a.textContent('#popCap'), /Floating window|Video only|Not supported/, 'pop-out capability badge');
 
 const b = await t.page('B', { speech: ['Action item: Bo sends the launch deck by Friday'] });

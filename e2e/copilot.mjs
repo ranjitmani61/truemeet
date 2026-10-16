@@ -28,7 +28,7 @@ await c.waitForSelector('#room:not([hidden])');
 await Promise.all([liveVideo(a), liveVideo(b), liveVideo(c)]);
 
 // Bo speaks Spanish: pick it the way a user would (a real keyboard gesture on the select).
-await b.click('[data-pop="#morePop"]');
+await b.click('#langBtn');
 await b.focus('#tlSel');
 for (let i = 0; i < 2 && (await b.inputValue('#tlSel')) !== 'es'; i++) await b.keyboard.press('ArrowDown');
 if ((await b.inputValue('#tlSel')) !== 'es') await b.selectOption('#tlSel', 'es');

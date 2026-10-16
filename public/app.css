@@ -419,11 +419,12 @@ button.chip:hover { color: var(--text); background: var(--surface-3); border-col
   position: absolute; left: 50%; bottom: 22px; translate: -50% 0; z-index: 5; display: flex; align-items: center; gap: 14px;
   padding: 10px 10px 10px 18px; border-radius: 18px; white-space: nowrap; font-size: 14.5px;
 }
-.captions {
+.caption-dock {
   position: absolute; left: 50%; bottom: 24px; translate: -50% 0; z-index: 6; width: min(780px, calc(100% - 32px));
-  display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none;
+  display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none;
 }
-.stage-wrap:has(#alone:not([hidden])) .captions { bottom: 92px; }
+.captions { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 100%; }
+.stage-wrap:has(#alone:not([hidden])) .caption-dock { bottom: 92px; }
 .captions div {
   max-width: 100%; padding: 9px 18px; border-radius: 14px; text-align: center; line-height: 1.45;
   font-size: clamp(16px, 1.6vw, 20px); background: rgba(4, 5, 10, .82); backdrop-filter: blur(10px); animation: tile-in var(--d2) var(--ease-out);
@@ -723,7 +724,7 @@ body.pip .compare { inset: 6px; padding: 8px 10px 10px; }
 .captions em { margin-left: 8px; font: 600 10.5px var(--font-ui); font-style: normal; letter-spacing: .05em; color: var(--faint); }
 .copilot-dock { position: absolute; right: 12px; bottom: 12px; z-index: 9; width: min(390px, calc(100% - 24px)); }
 .copilot-dock:empty { display: none; }
-.stage-wrap:has(.copilot-dock:not(:empty)) .captions { left: calc(50% - 205px); width: min(620px, calc(100% - 440px)); }
+.stage-wrap:has(.copilot-dock:not(:empty)) .caption-dock { left: calc(50% - 205px); width: min(620px, calc(100% - 440px)); }
 .copilot { padding: 14px 14px 12px; border-radius: 20px; max-height: min(72vh, 600px); overflow-y: auto; scrollbar-width: thin; animation: toast-in var(--d3) var(--ease-out); }
 .copilot header { display: flex; align-items: flex-start; gap: 10px; }
 .copilot header > .i { width: 20px; height: 20px; margin-top: 2px; color: var(--accent-text); }
@@ -741,10 +742,10 @@ body.pip .compare { inset: 6px; padding: 8px 10px 10px; }
 .cp-spoken { margin-top: 6px; font-size: 13.5px; line-height: 1.45; color: var(--muted); }
 .cp-pron { margin-top: 4px; font-size: 12.5px; font-style: italic; color: var(--faint); }
 .cp-tag { display: inline-block; margin-right: 6px; padding: 0 6px; border-radius: 6px; vertical-align: 1px; font: 700 10px/16px var(--font-ui); letter-spacing: .06em; color: var(--accent-text); background: rgba(123, 97, 255, .2); }
-.cp-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
+.cp-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-top: 8px; }
 .cp-actions .i { width: 14px; height: 14px; }
 .cp-basis { margin: 10px 2px 0; font-size: 12px; color: var(--faint); }
-@media (max-width: 640px) { .stage-wrap:has(.copilot-dock:not(:empty)) .captions { left: 50%; width: calc(100% - 32px); bottom: auto; top: 12px; } }
+@media (max-width: 640px) { .stage-wrap:has(.copilot-dock:not(:empty)) .caption-dock { left: 50%; width: calc(100% - 32px); bottom: auto; top: 12px; } }
 
 
 /* ---------- Speak to room ---------- */
@@ -810,6 +811,30 @@ body.pip .compare { inset: 6px; padding: 8px 10px 10px; }
 .strip .witness { top: auto; bottom: 30px; right: 6px; height: 24px; padding: 0 6px; }
 .strip .witness span { display: none; }
 body.pip .witness { top: 12px; right: 12px; }
+
+/* ---------- Startup ---------- */
+.boot { position: fixed; inset: 0; display: grid; place-content: center; justify-items: center; gap: 10px; padding: 24px; text-align: center; animation: boot-in var(--d2) 1s both; }
+.boot p { margin: 0; font: 600 20px var(--font-display); }
+.boot small { max-width: 520px; color: var(--muted); font-size: 14.5px; line-height: 1.5; }
+@keyframes boot-in { from { opacity: 0; } } /* a normal start is quicker than this: no flash */
+
+/* ---------- Caption languages ---------- */
+.lang-pop { width: 320px; display: flex; flex-direction: column; gap: 2px; }
+.lang-pop h3 { margin: 6px 12px 4px; font: 600 11.5px var(--font-ui); text-transform: uppercase; letter-spacing: .07em; color: var(--faint); }
+.lang-pop select { max-width: 150px; }
+.tl-status { margin: 4px 12px 8px; font-size: 12.5px; line-height: 1.45; color: var(--muted); }
+.tl-pill {
+  pointer-events: auto; display: flex; align-items: center; gap: 8px; max-width: 100%; min-height: 30px; padding: 5px 14px 5px 10px;
+  border-radius: 999px; font: 600 12.5px var(--font-ui); color: var(--text); text-align: left;
+}
+.tl-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tl-pill i { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--warn); }
+.tl-pill[data-state="ready"] i { background: var(--ok); }
+.tl-pill[data-state="downloading"] i, .tl-pill[data-state="checking"] i { background: var(--accent); animation: blink 1.2s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .3; } }
+.tl-pill[data-state="needs-click"] { box-shadow: inset 0 0 0 1px rgba(251, 191, 36, .55); }
+.captions em[title^="Approximate"] { color: var(--warn); }
+@media (prefers-reduced-motion: reduce) { .tl-pill i { animation: none !important; } }
 
 /* ---------- Responsive ---------- */
 @media (max-width: 1024px) {

@@ -10,6 +10,7 @@ import { TRACK, capture, createAnchor, dock, readLuma, track } from './tracker.j
 import { WITNESS, WITNESS_BEGIN, WITNESS_END, checkFrame, digest, distance, sameFrame, signFrame, verifyWitness } from './witness.js';
 import { createSpatialMixer } from './spatial.js';
 import { analyze, hasDevanagari, renderAnswer, renderBasis, renderIntent, speakable, transliterate } from './copilot.js';
+import { gloss, glossable } from './glossary.js';
 
 const $ = (s) => document.querySelector(s);
 const on = (sel, fn) => document.querySelectorAll(sel).forEach((el) => el.addEventListener('click', fn));
@@ -23,6 +24,8 @@ const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
 const EMOJI = ['👏', '❤️', '😂', '😮', '🎉', '👍'];
 const SPEAKING = 0.015; // ponytail: fixed voice-activity threshold; tune if active-speaker switching feels twitchy
 const LANG_RE = /^[a-z]{2,3}(-[a-z0-9]{2,8})?$/i;
+// What I speak (the speech recogniser's language) and what captions are translated into.
+const SPEAK = [['en-US', 'English (US)'], ['en-GB', 'English (UK)'], ['en-IN', 'English (India)'], ['hi-IN', 'हिन्दी'], ['es-ES', 'Español (España)'], ['es-MX', 'Español (México)'], ['fr-FR', 'Français'], ['de-DE', 'Deutsch'], ['pt-BR', 'Português (Brasil)'], ['it-IT', 'Italiano'], ['ja-JP', '日本語'], ['ko-KR', '한국어'], ['zh-CN', '中文'], ['ar-SA', 'العربية'], ['ru-RU', 'Русский']];
 const LANGS = [['', 'Off'], ['en', 'English'], ['es', 'Español'], ['fr', 'Français'], ['de', 'Deutsch'], ['it', 'Italiano'], ['pt', 'Português'], ['hi', 'हिन्दी'], ['ar', 'العربية'], ['ru', 'Русский'], ['ja', '日本語'], ['ko', '한국어'], ['zh', '中文']];
 const BOARD_BG = (ctx, r) => { ctx.fillStyle = '#0d1120'; ctx.fillRect(r.x, r.y, r.w, r.h); };
 const MOTION = 4; // ponytail: mean luminance change (0-255) that counts as camera movement; tune per camera
@@ -41,7 +44,6 @@ const chatLog = [];
 const highlights = [];
 const capEls = new Map();
 const knocks = new Map();
-const translators = new Map();
 const seen = new Set(); // note ids (captions, highlights) already in our notes: dedupes live relay vs catch-up
 const pinLog = new Map(); // pid → exported pin record
 const triggerAt = new Map(); // auto-highlight reason → last time it fired
@@ -75,6 +77,10 @@ const hue = (n) => { let h = 7; for (const c of n) h = (h * 31 + c.codePointAt(0
 const myInk = () => `hsl(${hue(me.name)} 90% 66%)`;
 const seenNid = (n) => { if (!n) return false; if (seen.has(n)) return true; seen.add(n); return false; };
 const isDirector = () => me.auto && !!me.id && all().filter((p) => p.state.auto && idOf(p)).map(idOf).sort()[0] === me.id;
+const IS_MAC = /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform); // "macOS" (Chromium) or "MacIntel"
+// What to tell someone whose camera, mic or screen was refused: macOS also asks, per app.
+const blocked = (what, pane) => `${what} blocked — allow it in Chrome’s address bar${IS_MAC ? `, and in System Settings → Privacy & Security → ${pane} (then restart Chrome)` : ''}`;
+const deviceError = (e, what, pane) => (e?.name === 'NotAllowedError' ? blocked(what, pane) : e?.name === 'NotReadableError' ? `${what} is in use by another app` : `${what} unavailable`);
 const baseLang = (l) => (typeof l === 'string' && LANG_RE.test(l) ? l.split('-')[0].toLowerCase() : 'en');
 const duration = (ms) => {
   const s = Math.floor(ms / 1000), h = Math.floor(s / 3600);
@@ -294,10 +300,10 @@ async function getCam() {
     $('#blurRow').hidden = !blurCapable(t);
     if (blurCapable(t) && $('#blurToggle').checked) t.applyConstraints({ backgroundBlur: true }).catch(() => {});
     return t;
-  } catch { toast('Camera unavailable', 'video-off'); return null; }
+  } catch (e) { toast(deviceError(e, 'Camera', 'Camera'), 'video-off', 9000); return null; }
 }
 async function getMic() {
-  try { return (await gum({ audio: audioOpts() })).getAudioTracks()[0]; } catch { toast('Microphone unavailable', 'mic-off'); return null; }
+  try { return (await gum({ audio: audioOpts() })).getAudioTracks()[0]; } catch (e) { toast(deviceError(e, 'Microphone', 'Microphone'), 'mic-off', 9000); return null; }
 }
 async function initMedia() {
   try {
@@ -446,19 +452,18 @@ function stopShare() {
   L.surface?.strokes.clear();
   L.surface?.patches.clear();
   witnessOut = null;
+  blackTicks = 0;
   paintWitness(L);
   pushVideo(); syncState();
 }
 function toggleHand() { me.hand = !me.hand; syncState(); }
 
-// ---------- Live captions + on-device translation ----------
-function toggleCaptions() {
-  if (!SR) return toast('Live captions need Chrome, Edge or Safari');
-  if (recognizer) { const r = recognizer; recognizer = null; r.stop(); return paintControls(); }
+// ---------- Live captions + translation ----------
+function startCaptions() {
   const r = (recognizer = new SR());
   r.continuous = true;
   r.interimResults = true;
-  r.lang = me.lang;
+  r.lang = me.lang; // fixed for the session: changing "I speak" restarts recognition
   r.onresult = (e) => {
     if (!me.mic || voiceDuck) return; // never transcribe while muted, or a reply our speakers are voicing
     for (let i = e.resultIndex; i < e.results.length; i++) {
@@ -469,7 +474,9 @@ function toggleCaptions() {
       if (nid) seen.add(nid);
       caption(L, text, res.isFinal, me.lang);
       send({ type: 'caption', text, final: res.isFinal, lang: me.lang, nid });
-      if (res.isFinal) directorCaption(L, text);
+      if (!res.isFinal) continue;
+      directorCaption(L, text);
+      if (!peers.size) copilotFor(L, text, me.lang, true); // alone: preview the Co-Pilot on your own questions
     }
   };
   r.onend = () => setTimeout(() => { if (recognizer === r) try { r.start(); } catch {} }, 300); // browsers stop after silence
@@ -480,44 +487,120 @@ function toggleCaptions() {
     toast('Live captions are blocked in this browser', 'captions');
   };
   r.start();
+}
+const stopCaptions = () => { const r = recognizer; recognizer = null; r?.stop(); };
+const speakLabel = () => SPEAK.find(([t]) => t === me.lang)?.[1] ?? me.lang;
+function toggleCaptions() {
+  if (!SR) return toast('Live captions need Chrome, Edge or Safari');
+  if (recognizer) stopCaptions(); else startCaptions();
   paintControls();
-  toast('Live captions on — your browser transcribes your speech for everyone', 'captions');
+  paintTlStatus();
+  if (recognizer) toast(`Live captions on — listening for ${speakLabel()}. Change it under Caption languages.`, 'captions');
 }
-function translator(src, dst) {
-  // Chrome's built-in Translator API: models run on-device, so captions never leave the browser.
-  const k = `${src}>${dst}`;
-  if (!translators.has(k)) {
-    translators.set(k, (async () => {
-      const pair = { sourceLanguage: src, targetLanguage: dst };
-      if ('Translator' in self) return (await Translator.availability(pair)) === 'unavailable' ? null : Translator.create(pair);
-      if (typeof window.translation?.createTranslator === 'function') return (await window.translation.canTranslate?.(pair)) === 'no' ? null : window.translation.createTranslator(pair);
-      return null;
-    })().catch(() => null));
-  }
-  return translators.get(k);
+// Arrow keys on a closed <select> fire "change" at every step: act once, where the user stops —
+// well within the few seconds a click or key press counts as a user gesture (downloads need one).
+const settled = () => { let id = 0; return (fn) => { clearTimeout(id); id = setTimeout(fn, 600); }; };
+const afterSpeak = settled(), afterTarget = settled();
+function setSpeak(tag) {
+  me.lang = tag;
+  store.set('truemeet-speak', tag);
+  syncState(); // everyone translates my captions from this language
+  paintTlStatus();
+  afterSpeak(() => {
+    if (recognizer) { stopCaptions(); startCaptions(); }
+    if (target && baseLang(me.lang) !== target) engine(baseLang(me.lang), target, true);
+    paintControls();
+    toast(`Captions now listen for ${speakLabel()}`, 'captions');
+  });
 }
-const translations = new Map(); // `${src}>${dst}\n${text}` → Promise<string|null>, bounded
-function translateTo(text, src, dst) {
-  if (!dst || src === dst) return Promise.resolve(null);
-  const k = `${src}>${dst}\n${text}`;
-  if (!translations.has(k)) {
-    if (translations.size >= 300) translations.delete(translations.keys().next().value);
-    translations.set(k, translator(src, dst).then((t) => (t ? t.translate(text) : null)).catch(() => null));
+
+// One engine per language pair. Chrome's Translator API runs on-device; a model it still has to
+// download needs a click (user activation) and can take minutes, and some pairs have no model.
+// Until a model is ready — or when there is none — captions use the instant built-in dictionary
+// (glossary.js), always marked "≈", and transcript lines are upgraded once the model arrives.
+const engines = new Map(); // 'en>es' → { src, dst, state, progress, translator, settled }
+// gesture: called from a deliberate user choice, so a model may be downloaded; otherwise a model
+// that needs downloading waits for a click ('needs-click').
+function engine(src, dst, gesture = false) {
+  const k = `${src}>${dst}`, old = engines.get(k);
+  if (old && !(gesture && ['needs-click', 'failed'].includes(old.state))) return old;
+  const e = { src, dst, state: 'checking', progress: 0, translator: null };
+  engines.set(k, e);
+  e.settled = prepare(e, gesture);
+  return e;
+}
+async function prepare(e, gesture) {
+  const pair = { sourceLanguage: e.src, targetLanguage: e.dst };
+  const set = (state, progress = e.progress) => { Object.assign(e, { state, progress }); paintTlStatus(); };
+  const monitor = (m) => m.addEventListener('downloadprogress', (ev) => set('downloading', ev.total ? ev.loaded / ev.total : ev.loaded));
+  try {
+    if ('Translator' in self) {
+      const a = await Translator.availability(pair);
+      if (a === 'unavailable') return set('no-model');
+      if (a !== 'available') { if (!gesture) return set('needs-click'); set('downloading'); }
+      e.translator = await Translator.create({ ...pair, monitor });
+    } else if (typeof window.translation?.createTranslator === 'function') {
+      const a = await window.translation.canTranslate?.(pair);
+      if (a === 'no') return set('no-model');
+      if (a === 'after-download') { if (!gesture) return set('needs-click'); set('downloading'); }
+      e.translator = await window.translation.createTranslator(pair);
+    } else return set('no-model');
+    set('ready', 1);
+  } catch (err) {
+    set(err?.name === 'NotAllowedError' ? 'needs-click' : 'failed');
   }
-  return translations.get(k);
+}
+const modelReady = (src, dst) => engine(src, dst).settled.then(() => engine(src, dst).state === 'ready');
+const translations = new Map(); // model output only (the dictionary is instant): `${src}>${dst}\n${text}` → Promise<string|null>
+// → { text, via: 'model' | 'dictionary' }, or null when neither can translate it.
+async function translateTo(text, src, dst) {
+  if (!dst || src === dst) return null;
+  const e = engine(src, dst);
+  if (e.state === 'checking') await Promise.race([e.settled, new Promise((r) => setTimeout(r, 1200))]); // an installed model loads in well under a second
+  if (e.state === 'ready') {
+    const k = `${src}>${dst}\n${text}`;
+    if (!translations.has(k)) {
+      if (translations.size >= 300) translations.delete(translations.keys().next().value);
+      translations.set(k, e.translator.translate(text).catch(() => null));
+    }
+    const out = await translations.get(k);
+    if (out) return { text: out, via: 'model' };
+  }
+  const g = gloss(text, src, dst);
+  return g && { text: g, via: 'dictionary' };
 }
 const translate = (text, lang) => translateTo(text, baseLang(lang), target);
+const sourceLangs = () => new Set([baseLang(me.lang), ...[...peers.values()].map((p) => baseLang(p.state.lang))]);
 function setTarget(lang) {
   target = lang;
   store.set('truemeet-tl', lang);
-  translators.clear();
-  translations.clear();
-  if (!lang) return toast('Caption translation off', 'languages');
-  if (!CAPS.translate) { $('#tlSel').value = target = ''; toast('On-device translation isn’t available in this browser (needs Chrome 138+)', 'languages'); return; }
-  // Created inside this user gesture so Chrome may download the language models.
-  for (const l of new Set([...peers.values()].map((p) => baseLang(p.state.lang)))) if (l !== lang) translator(l, lang);
-  toast(`Captions will be translated to ${LANGS.find(([c]) => c === lang)[1]} on your device`, 'languages');
+  paintTlStatus();
+  afterTarget(() => {
+    if (!target) return toast('Caption translation off', 'languages');
+    for (const src of sourceLangs()) if (src !== target) engine(src, target, true); // a deliberate choice: models may download
+    toast(`Captions will be translated to ${LANGS.find(([c]) => c === target)[1]}`, 'languages');
+  });
 }
+function describeEngine(e) {
+  const pair = `${e.src.toUpperCase()} → ${e.dst.toUpperCase()}`, meanwhile = glossable(e.src, e.dst) ? ' · dictionary meanwhile' : '';
+  switch (e.state) {
+    case 'ready': return `${pair} · on-device translator ready`;
+    case 'checking': return `${pair} · checking translator…`;
+    case 'downloading': return `${pair} · downloading model ${Math.round(e.progress * 100)}%${meanwhile}`;
+    case 'needs-click': return `${pair} · click to download the model${meanwhile}`;
+    default: return glossable(e.src, e.dst) ? `${pair} · built-in dictionary (approximate)` : `${pair} · no translator for this pair here`;
+  }
+}
+// The pill above the captions: one status per language pair that matters right now.
+function paintTlStatus() {
+  const list = target && me.id ? [...sourceLangs()].filter((src) => src !== target).map((src) => engine(src, target)) : [];
+  const text = list.map(describeEngine).join('  ·  ');
+  $('#tlPill').hidden = !list.length;
+  $('#tlPill').dataset.state = ['needs-click', 'downloading', 'checking', 'ready'].find((st) => list.some((e) => e.state === st)) ?? 'dictionary';
+  $('#tlPill span').textContent = text;
+  $('#tlStatus').textContent = text || (target ? 'Nothing to translate: everyone speaks your caption language.' : 'Captions are shown as spoken.');
+}
+const tlTag = (src, via) => `${src.toUpperCase()} → ${target.toUpperCase()}${via === 'dictionary' ? ' ≈' : ''}`;
 function caption(p, text, final, lang) {
   let el = capEls.get(p.id);
   if (!el) {
@@ -527,29 +610,39 @@ function caption(p, text, final, lang) {
     $('#captions').append(el);
     capEls.set(p.id, el);
   }
-  const span = el.querySelector('span');
+  const span = el.querySelector('span'), em = el.querySelector('em');
   span.textContent = text;
+  em.textContent = '';
+  el.title = '';
   clearTimeout(el.timer);
   el.timer = setTimeout(() => { el.remove(); capEls.delete(p.id); }, 4000);
-  // Live translation of every caption update, interim ones too; only the newest result is shown.
-  const live = p !== L && target && baseLang(lang) !== target ? translate(text, lang) : null;
+  // Live translation of every caption update — mine too, so you can hear yourself in another
+  // language — interim ones included; only the newest result is shown.
+  const src = baseLang(lang), live = target && src !== target ? translate(text, lang) : null;
   if (live) {
     const seq = (el.seq = (el.seq ?? 0) + 1);
     live.then((tr) => {
       if (!tr || el.seq !== seq) return;
-      span.textContent = tr;
-      el.querySelector('em').textContent = `${baseLang(lang).toUpperCase()} → ${target.toUpperCase()}`;
+      span.textContent = tr.text;
+      em.textContent = tlTag(src, tr.via);
+      em.title = tr.via === 'dictionary' ? 'Approximate: built-in dictionary while the on-device translator isn’t ready' : 'Translated on your device';
+      el.title = text;
     });
   }
   if (!final) return;
   const { li, entry } = addEntry('#transcript', transcript, p.name, text, false);
-  live?.then((tr) => {
-    if (!tr) return;
-    entry.tr = tr;
-    li.querySelector('p').textContent = tr;
-    li.querySelector('small').append(' · translated');
-    li.title = text;
-  });
+  live?.then((tr) => tr && showTranslation(li, entry, text, src, tr));
+}
+function showTranslation(li, entry, text, src, tr) {
+  Object.assign(entry, { tr: tr.text, trVia: tr.via });
+  li.querySelector('p').textContent = tr.text;
+  li.title = text;
+  const small = li.querySelector('small'), mark = small.querySelector('.tr') ?? small.appendChild(Object.assign(document.createElement('span'), { className: 'tr' }));
+  mark.textContent = tr.via === 'dictionary' ? ' · ≈ dictionary translation' : ' · translated';
+  const dst = target;
+  if (tr.via === 'dictionary') { // upgrade the line when the real model is ready
+    modelReady(src, dst).then((ok) => ok && translateTo(text, src, dst)).then((better) => better?.via === 'model' && showTranslation(li, entry, text, src, better));
+  }
 }
 
 // ---------- Private Co-Pilot ----------
@@ -568,7 +661,7 @@ function meetingState(question) {
     captions: transcript.filter((x) => x.text !== question).slice(-12).map(({ name, text, t }) => ({ name, text, t })),
   };
 }
-async function copilotFor(p, text, lang) {
+async function copilotFor(p, text, lang, self = false) {
   if (!copilotOn || !me.id || Date.now() - copilotAt < 3000) return;
   const speakerLang = baseLang(lang), mine = target || baseLang(me.lang);
   const a = analyze({ text, lang: speakerLang, speaker: p.name, state: meetingState(text) });
@@ -576,19 +669,20 @@ async function copilotFor(p, text, lang) {
   copilotAt = Date.now();
   const sayLang = a.lang; // templates exist for 7 languages; others fall back to English (translated below)
   const view = {
-    source: 'from this meeting’s context', mine, speakerLang, speakerTag: LANG_RE.test(lang) ? lang : speakerLang,
-    intent: renderIntent(a, mine, (await translateTo(text, speakerLang, mine)) ?? text),
+    source: self ? 'preview on your own speech' : 'from this meeting’s context', mine, speakerLang, speakerTag: LANG_RE.test(lang) ? lang : speakerLang,
+    intent: renderIntent(a, mine, (await translateTo(text, speakerLang, mine))?.text ?? text),
     basis: renderBasis(a, mine),
     answers: await Promise.all(a.answers.map(async (ans) => {
       const spoken = renderAnswer(a, ans, sayLang);
-      return { native: renderAnswer(a, ans, mine), spoken: sayLang === speakerLang ? spoken : (await translateTo(spoken, sayLang, speakerLang)) ?? spoken };
+      return { native: renderAnswer(a, ans, mine), spoken: sayLang === speakerLang ? spoken : (await translateTo(spoken, sayLang, speakerLang))?.text ?? spoken };
     })),
   };
   copilotCard(view);
   const ai = await aiSuggest(a, p, text, speakerLang).catch(() => null);
   if (!ai || copilotView !== view) return;
-  const native = await Promise.all(ai.answers.map((x) => (mine === 'en' ? x : translateTo(x, 'en', mine))));
-  const spoken = await Promise.all(ai.answers.map((x) => (speakerLang === 'en' ? x : translateTo(x, 'en', speakerLang))));
+  const model = (x, dst) => translateTo(x, 'en', dst).then((r) => (r?.via === 'model' ? r.text : null)); // a dictionary gloss isn't good enough here
+  const native = await Promise.all(ai.answers.map((x) => (mine === 'en' ? x : model(x, mine))));
+  const spoken = await Promise.all(ai.answers.map((x) => (speakerLang === 'en' ? x : model(x, speakerLang))));
   if (native.some((x) => !x) || spoken.some((x) => !x)) return; // keep the natively-phrased answers rather than mix languages
   copilotCard({ ...view, source: 'refined by on-device AI', answers: ai.answers.map((_, i) => ({ native: native[i], spoken: spoken[i] })) });
 }
@@ -741,7 +835,7 @@ async function speakReply(p, text, l, local = false) {
   addEntry('#transcript', transcript, `${p === L ? me.name : p.name} · TrueMeet voice`, text, false);
   const banner = spokenBanner(p, text);
   if (local) return banner.meta('Spoken to the room — the others hear the voice');
-  if (target && baseLang(tag) !== target) translate(text, tag).then((tr) => tr && banner.translation(tr));
+  if (target && baseLang(tag) !== target) translate(text, tag).then((tr) => tr && banner.translation(tr.via === 'dictionary' ? `≈ ${tr.text}` : tr.text));
   duck(true);
   let ended = false;
   const finish = () => { if (!ended) { ended = true; duck(false); banner.done(); } };
@@ -1101,13 +1195,25 @@ async function shareLuma() { // straight from the track, so it keeps working whi
   }
   return L.video?.videoWidth ? readLuma(L.video, w, h) : null;
 }
+// A share that is pure black usually means the OS refused screen capture (on macOS: Screen
+// Recording permission) — the presenter would otherwise never know what the room sees.
+let blackTicks = 0;
+function blackShareCheck({ data }) {
+  let max = 0;
+  for (const v of data) if (v > max) max = v;
+  blackTicks = max < 16 ? blackTicks + 1 : 0;
+  if (blackTicks !== 2) return;
+  toast(IS_MAC ? 'Your shared screen is coming through black. On a Mac: System Settings → Privacy & Security → Screen & System Audio Recording → allow Google Chrome, then restart Chrome.' : 'Your shared screen is coming through black — try sharing a different window or screen.', 'screen', 12000);
+}
 async function witnessTick() {
-  if (!screenTrack || !identity || !me.id || witnessBusy) return;
+  if (!screenTrack || !me.id || witnessBusy) return;
   witnessBusy = true;
   try {
-    const out = (witnessOut ??= { last: null, rec: chainRecord(me.name, identity.fingerprint, identity.jwk, true) });
     const luma = await shareLuma();
-    if (!luma) return;
+    if (!luma || !screenTrack) return;
+    blackShareCheck(luma);
+    if (!identity) return; // signing needs WebCrypto (HTTPS or localhost)
+    const out = (witnessOut ??= { last: null, rec: chainRecord(me.name, identity.fingerprint, identity.jwk, true) });
     const f = await signFrame(identity.privateKey, room, out.last, digest(luma), Date.now() - skew);
     if (witnessOut !== out) return; // the share ended meanwhile
     out.last = f;
@@ -1375,7 +1481,7 @@ function renderCatchup(m) {
 }
 async function downloadNotes() {
   if (!transcript.length && !chatLog.length && !highlights.length && !pinLog.size && !proposals.size && !witnessChains.length) return toast('Nothing yet — turn on live captions, chat, drop a pin or mark a highlight');
-  const line = (x) => `[${clock(x.t)}] ${x.name}: ${x.text}${x.tr ? `\n          → ${x.tr}` : ''}`;
+  const line = (x) => `[${clock(x.t)}] ${x.name}: ${x.text}${x.tr ? `\n          → ${x.tr}${x.trVia === 'dictionary' ? '  (≈ dictionary)' : ''}` : ''}`;
   const hl = (x) => `[+${duration(Math.max(0, x.t - started))}${x.rec != null ? ` · rec ${duration(x.rec)}` : ''}] ${x.auto ? `[Auto] ${x.reason}` : x.name}${x.context ? ` — ${x.context}` : ''}`;
   const pin = (x) => `#${x.n} · ${x.name} · ${clock(x.t)} · ${x.label}${x.note ? ` — “${x.note}”` : ''}${x.resolved ? ` (resolved by ${x.resolvedBy})` : ''}`;
   const text = [
@@ -1716,6 +1822,7 @@ function renderPeople() {
     ul.append(li);
   }
   $('#peopleCount').textContent = list.length;
+  paintTlStatus(); // who's here decides which caption languages need translating
   $('#hostTools').hidden = !me.id || host !== me.id;
   renderTalk();
 }
@@ -2016,9 +2123,21 @@ $('#micSel').onchange = async () => {
 };
 $('#nsToggle').onchange = () => micTrack?.applyConstraints(audioOpts()).catch(() => toast('Noise suppression unavailable'));
 $('#blurToggle').onchange = (e) => camTrack?.applyConstraints({ backgroundBlur: e.target.checked }).catch(() => toast('Background blur unavailable'));
+me.lang = (() => { // remembered, else the browser's language if offered, else the same language anywhere, else en-US
+  const want = (store.get('truemeet-speak') || navigator.language || 'en-US').toLowerCase();
+  return (SPEAK.find(([t]) => t.toLowerCase() === want) ?? SPEAK.find(([t]) => baseLang(t) === baseLang(want)) ?? SPEAK[0])[0];
+})();
+$('#speakSel').append(...SPEAK.map(([v, label]) => new Option(label, v)));
+$('#speakSel').value = me.lang;
+$('#speakSel').onchange = (e) => setSpeak(e.target.value);
 $('#tlSel').append(...LANGS.map(([v, label]) => new Option(label, v)));
 $('#tlSel').value = target;
 $('#tlSel').onchange = (e) => setTarget(e.target.value);
+$('#tlPill').onclick = (e) => { // a click is the gesture a model download needs; otherwise it opens the language picker
+  e.stopPropagation();
+  const waiting = [...engines.values()].filter((x) => x.dst === target && x.state === 'needs-click');
+  if (waiting.length) waiting.forEach((x) => engine(x.src, x.dst, true)); else $('#langBtn').click();
+};
 $('#waitToggle').onchange = (e) => send({ type: 'waiting', on: e.target.checked });
 $('#copilotToggle').checked = copilotOn;
 $('#copilotToggle').onchange = (e) => {
@@ -2072,9 +2191,9 @@ paintBoardTools();
 paintCaps();
 function paintCaps() {
   const badge = (sel, text) => { $(sel).textContent = text || 'Not supported'; $(sel).classList.toggle('ok', !!text); };
-  badge('#tlCap', CAPS.translate);
+  badge('#tlCap', CAPS.translate || 'Dictionary only');
+  $('#tlCap').classList.toggle('ok', !!CAPS.translate);
   badge('#popCap', CAPS.popout);
-  $('#tlSel').disabled = !CAPS.translate;
   $('#pipBtn').disabled = !CAPS.popout;
   if (!SR) { $('#ccBtn').classList.add('unsupported'); $('#ccBtn').dataset.tip = 'Live captions · not supported in this browser'; }
 }
@@ -2103,4 +2222,5 @@ document.addEventListener('keyup', (e) => { if (e.key === 'Alt' && whisperTo) { 
 addEventListener('blur', () => stopWhisper()); // never leave a whisper stuck on
 addEventListener('popstate', () => { if (L.tile) leave(); route(); });
 
+$('#boot').remove(); // started: the fallback message in index.html is no longer needed
 route();

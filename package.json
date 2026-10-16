@@ -4,13 +4,15 @@
   "private": true,
   "description": "Premium peer-to-peer video meetings with live captions, recording and host controls.",
   "type": "module",
+  "bin": { "truemeet": "server.js" },
+  "files": ["server.js", "public"],
   "scripts": {
     "start": "node server.js",
     "test": "node --test",
-    "test:e2e": "node e2e/two-person.mjs && node e2e/three-person.mjs && node e2e/novel.mjs && node e2e/deep-tech.mjs",
+    "test:e2e": "node e2e/two-person.mjs && node e2e/three-person.mjs && node e2e/novel.mjs && node e2e/deep-tech.mjs && node e2e/solo.mjs",
     "test:e2e:real": "node e2e/real-browser.mjs && node e2e/copilot.mjs"
   },
   "engines": {
-    "node": ">=24.2"
+    "node": ">=20.11"
   }
 }

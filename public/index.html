@@ -11,9 +11,27 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Space+Grotesk:wght@500;600;700&family=Instrument+Serif:ital@1&display=swap">
   <link rel="stylesheet" href="/app.css">
+  <script>
+    // If the app can't start, say why instead of leaving an empty dark page (app.js removes #boot).
+    addEventListener('error', function (e) {
+      if (window.__bootError) return;
+      if (e.message) window.__bootError = e.message;
+      else if (e.target && e.target.tagName === 'SCRIPT') window.__bootError = 'could not load ' + e.target.src;
+    }, true);
+    setTimeout(function () {
+      var box = document.getElementById('boot');
+      if (!box) return;
+      box.querySelector('p').textContent = 'TrueMeet couldn’t start';
+      box.querySelector('small').textContent = location.protocol === 'file:'
+        ? 'Open it through its server, not as a file: start TrueMeet (npm start, or the installer), then go to http://localhost:3000.'
+        : window.__bootError ? 'Error: ' + window.__bootError + '. Update Chrome (Settings → About Chrome), then reload.'
+        : 'Still starting… If this doesn’t change, update Chrome (Settings → About Chrome) and reload.';
+    }, 4000);
+  </script>
   <script type="module" src="/app.js"></script>
 </head>
 <body>
+<div id="boot" class="boot" role="status"><p>Starting TrueMeet…</p><small></small></div>
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
   <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></symbol>
   <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="m2 2 20 20M18.89 13.23A7.12 7.12 0 0 0 19 12v-2M5 10v2a7 7 0 0 0 12 5M15 9.34V5a3 3 0 0 0-5.68-1.33M9 9v3a3 3 0 0 0 5.12 2.12M12 19v3"/></symbol>
@@ -230,7 +248,10 @@
       <div id="stage" class="stage"></div>
       <div id="strip" class="strip"></div>
       <div id="alone" class="alone glass"><span>You’re the only one here.</span><button class="btn primary sm copy-link"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>Copy invite link</button></div>
-      <div id="captions" class="captions" aria-live="polite"></div>
+      <div class="caption-dock">
+        <button id="tlPill" class="tl-pill glass" hidden title="Caption translation status — click to change languages"><i aria-hidden="true"></i><span role="status"></span></button>
+        <div id="captions" class="captions" aria-live="polite"></div>
+      </div>
       <div id="floaters" class="floaters" aria-hidden="true"></div>
       <div id="copilot" class="copilot-dock" aria-live="polite"></div>
       <div id="board" class="board" hidden>
@@ -304,6 +325,15 @@
     </div>
     <button class="ctl" id="handBtn" data-tip="Raise hand · H" aria-label="Raise hand"><svg class="i" aria-hidden="true"><use href="#i-hand"/></svg></button>
     <button class="ctl" id="ccBtn" data-tip="Live captions · L" aria-label="Live captions"><svg class="i" aria-hidden="true"><use href="#i-captions"/></svg></button>
+    <div class="pop-wrap">
+      <button class="ctl" id="langBtn" data-pop="#langPop" data-tip="Caption languages" aria-label="Caption languages" aria-haspopup="true"><svg class="i" aria-hidden="true"><use href="#i-languages"/></svg></button>
+      <div id="langPop" class="pop glass lang-pop" hidden>
+        <h3>Caption languages</h3>
+        <label class="switch select-row"><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span>I speak</span><select id="speakSel" aria-label="I speak — the language your live captions listen for"></select></label>
+        <label class="switch select-row"><svg class="i" aria-hidden="true"><use href="#i-languages"/></svg><span>Translate to<em class="cap" id="tlCap"></em></span><select id="tlSel" aria-label="Translate captions to"></select></label>
+        <p id="tlStatus" class="tl-status"></p>
+      </div>
+    </div>
     <button class="ctl" id="recBtn" data-tip="Record" aria-label="Record"><svg class="i" aria-hidden="true"><use href="#i-record"/></svg></button>
     <span class="sep" aria-hidden="true"></span>
     <button class="ctl" id="chatBtn" data-tip="Chat · C" aria-label="Chat"><svg class="i" aria-hidden="true"><use href="#i-message"/></svg><b class="badge" id="unread" hidden></b></button>
@@ -313,7 +343,6 @@
       <div id="morePop" class="pop glass menu" hidden>
         <label class="switch"><svg class="i" aria-hidden="true"><use href="#i-waves"/></svg><span>Noise suppression</span><input type="checkbox" id="nsToggle" checked></label>
         <label class="switch" id="blurRow" hidden><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg><span>Background blur</span><input type="checkbox" id="blurToggle"></label>
-        <label class="switch select-row"><svg class="i" aria-hidden="true"><use href="#i-languages"/></svg><span>Translate captions<em class="cap" id="tlCap"></em></span><select id="tlSel" aria-label="Translate captions to"></select></label>
         <label class="switch"><svg class="i" aria-hidden="true"><use href="#i-wand"/></svg><span>Co-Pilot suggestions<em class="cap ok">Private</em></span><input type="checkbox" id="copilotToggle" checked></label>
         <button class="mark-btn"><svg class="i" aria-hidden="true"><use href="#i-bookmark"/></svg>Mark highlight<kbd>B</kbd></button>
         <button id="pipBtn"><svg class="i" aria-hidden="true"><use href="#i-pip"/></svg><span>Pop-out presenter view<em class="cap" id="popCap"></em></span></button>

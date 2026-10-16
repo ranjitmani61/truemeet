@@ -3,13 +3,35 @@
 Premium, self-hosted video meetings in the browser. No accounts, no downloads, no time limits.
 Audio and video go directly between participants (WebRTC, DTLS-SRTP), and the server only relays signaling.
 
+## Install on any machine
+
+| Machine | One command |
+|---|---|
+| macOS, Linux | `curl -fsSL https://raw.githubusercontent.com/ranjitmani61/truemeet/main/install.sh \| sh` |
+| Windows (PowerShell) | `irm https://raw.githubusercontent.com/ranjitmani61/truemeet/main/install.ps1 \| iex` |
+| Anything with Node.js 20.11+ | `npx github:ranjitmani61/truemeet` |
+| Anything with Docker | `docker build -t truemeet https://github.com/ranjitmani61/truemeet.git && docker run -p 3000:3000 truemeet` |
+
+- **What the installers do:** they need no admin rights, and everything stays in `~/.truemeet` (or `%LOCALAPPDATA%\TrueMeet` on Windows). They use your Node.js if it is 20.11 or newer. Otherwise they download a private copy, x64 or arm64, verified against nodejs.org's published SHA-256 sums. Then they install TrueMeet and start it.
+- **Update:** run the same command again. **Uninstall:** delete that folder.
+- **Address:** TrueMeet opens on http://localhost:3000, or the next free port if 3000 is taken.
+- **Other devices** on your network need HTTPS for camera and mic; see *Deploying beyond localhost*.
+- **Tested:**
+  - The Linux installer, in a clean Debian container with no Node.js.
+  - The Docker image.
+  - `npx` from the packed package.
+  - `install.ps1` parses in PowerShell, and its checksum lookup works against nodejs.org's real sums file.
+- **Not run:** macOS, and Windows end to end.
+
+## Develop
+
 ```bash
-npm start              # http://localhost:3000  (busy? PORT=3100 npm start)
+npm start              # http://localhost:3000 (next free port if it's taken; PORT=… to choose)
 npm test               # unit tests (director, time machine, ledger, co-pilot, tracker, witness) + server tests
 npm run test:e2e       # headless 2- and 3-browser suites (see Testing)
 ```
 
-Requires Node.js 24.2 or later. It has no npm dependencies.
+Requires Node.js 20.11 or later (tested on 20, 22 and 24). It has no npm dependencies.
 
 ## Features
 
@@ -82,9 +104,19 @@ Requires Node.js 24.2 or later. It has no npm dependencies.
     - **What was ruled out:** a 256-bit mean-grid dHash didn't separate look-alikes either. A noise floor of 3 or less let codec noise flip up to 26 detail bits.
 
 **Live Polyglot + private "Best Answer" Co-Pilot**
-- **Live cross-language captions**: pick your language under More → Translate captions. Every caption from someone speaking another language is translated on your device as they speak, interim words included, with an `EN → ES` tag. Results are cached and the newest always wins.
+- **Caption languages** (the button next to CC): **I speak** sets the language your live captions listen for (English US/UK/India, हिन्दी, Español, Français, Deutsch, Português, Italiano, 日本語, 한국어, 中文, العربية, Русский). Speaking Hindi with English recognition yields nonsense, so this matters. **Translate to** picks the language you read.
+- **Live cross-language captions**: every caption in another language is translated as it is spoken, interim words included, with an `EN → ES` tag. That includes **your own**, so you can test alone and see yourself in Spanish or Hindi. Results are cached and the newest always wins.
+- **Translation that always shows something**: a status pill above the captions says what's happening for each language pair:
+  - "EN → ES · downloading model 45% · dictionary meanwhile"
+  - "on-device translator ready"
+  - "click to download the model"
+  - "built-in dictionary (approximate)"
+  - Chrome's on-device Translator is used whenever it's ready. Until then, or for pairs it has no model for (e.g. Hindi here), a **built-in dictionary** (`glossary.js`: about 160 meeting words and phrases in the 7 Co-Pilot languages, pivoting through English) translates instantly.
+  - The dictionary is a word-by-word gloss that keeps the speaker's word order, so it is always marked `≈` on the caption, in the transcript and in the notes. Transcript lines are upgraded in place once the model arrives.
+  - A model download only starts from a deliberate choice: the language you settle on, or a click on the pill. Arrowing through the list never downloads every language on the way.
+  - There is no server-side translation fallback: it would send everyone's speech to a third party and add a dependency.
 - **Co-Pilot**:
-  - When someone else asks a question, raises an objection, names a price or a deadline, or asks for a status update, you get a card **only you can see**.
+  - When someone else asks a question, raises an objection, names a price or a deadline, or asks for a status update, you get a card **only you can see**. When you're alone in the room it previews on **your own** questions, so you can try it before anyone joins.
   - The card shows what they're asking, in your language, plus **two ranked replies** grounded in the meeting's own pins, highlights, proposals, whiteboard snips and recent captions.
   - Each reply appears in **your language and in theirs**. The version in their language is phrased for reading aloud ("$5k" becomes "5 thousand dollars", and Hindi gets a romanized "Say it: …" guide). **Read aloud** previews it with speech synthesis; **Send** posts it to the meeting chat in their language with one click.
   - `public/copilot.js` is deterministic and offline:
@@ -161,6 +193,7 @@ npm start
 - `public/director.js`: Auto-Mode decision logic as pure functions, unit-tested in `director.test.js`: phrase triggers, burst/crosstalk/collision detectors, turn order, hesitation detector, focus choice with dwell, away monitor, frame diff.
 - `public/timemachine.js`: rewind ring buffer and frame geometry (crop, fit, whiteboard slots), with thin capture helpers. Unit-tested.
 - `public/ledger.js`: canonical JSON, ECDSA identities, sign/verify, and ledger verification. It runs unchanged in browsers, in the server, and in offline verification. Unit-tested, including tamper cases.
+- `public/glossary.js`: the built-in caption dictionary, longest-phrase-first with native contractions (del, du, do…). Pure and unit-tested in `glossary.test.js`.
 - `public/copilot.js`: Co-Pilot intent detection, entity extraction, context retrieval, native-language reply templates, read-aloud phrasing and Devanagari romanization. Pure and unit-tested in `copilot.test.js`.
 - `public/spatial.js`: the whisper's Web Audio mix, engaged only while a whisper is active, so Chrome's normal echo-cancellation path is used the rest of the time.
 - `public/tracker.js`: living anchors (ZNCC block matching, sub-pixel peaks, four-phase coarse re-lock, docking) and the proposed-move pixel math (Coons-patch plate, tether geometry). Pure and unit-tested in `tracker.test.js`.
@@ -236,6 +269,13 @@ npm start
       - Ada's saved frame matches a signed frame.
       - A screenshot of the meeting window matches none (closest at 37/64 layout and 9–11/64 detail bits).
       - An edited digest in the notes is flagged INVALID.
+  - `e2e/solo.mjs` (part of `npm run test:e2e`, 1 browser, about 15 s): one person alone, with Chrome's Translator API replaced by one that behaves like a fresh profile. The en→es model must be downloaded, only after a real gesture, with progress events; there is no model for Hindi.
+    - "I speak: English (US)" and "Translate to: Español" are picked with the keyboard. The pill shows "EN → ES · downloading model 45% · dictionary meanwhile", and recognition runs in `en-US`.
+    - My own question is captioned "¿Cuál es el estado del lanzamiento?" `[EN → ES ≈]` at once, and a private Co-Pilot preview card appears in Spanish.
+    - When the download finishes, the pill says ready, the transcript line is upgraded to the model's translation, and new captions use the model.
+    - Arrowing to Hindi through four other languages downloads none of them and shows one toast. EN → HI captions come from the dictionary ("स्थिति"), with a Co-Pilot card in Hindi.
+    - Switching "I speak" to हिन्दी restarts recognition in `hi-IN`. HI → EN captions and the Co-Pilot card follow.
+    - The notes keep originals and model translations, and mark dictionary lines `(≈ dictionary)`.
   - All suites assert zero console errors.
 
 ## Privacy notes
