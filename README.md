@@ -14,7 +14,7 @@ Audio and video go directly between participants (WebRTC, DTLS-SRTP), and the se
 
 - **What the installers do:** they need no admin rights, and everything stays in `~/.truemeet` (or `%LOCALAPPDATA%\TrueMeet` on Windows). They use your Node.js if it is 20.11 or newer. Otherwise they download a private copy, x64 or arm64, verified against nodejs.org's published SHA-256 sums. Then they install TrueMeet and start it.
 - **Update:** run the same command again. **Uninstall:** delete that folder.
-- **Address:** TrueMeet opens on http://localhost:3000, or the next free port if 3000 is taken.
+- **Address:** always http://localhost:3000. The `truemeet` launcher stops whatever else is listening on port 3000 first and says what it stopped. Set `PORT` to use another port.
 - **Other devices** on your network need HTTPS for camera and mic; see *Deploying beyond localhost*.
 - **Tested:**
   - The Linux installer, in a clean Debian container with no Node.js.

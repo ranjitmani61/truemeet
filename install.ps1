@@ -50,8 +50,10 @@ try {
   Remove-Item -Recurse -Force (Join-Path $Dir 'app') -ErrorAction SilentlyContinue
   Move-Item $app.FullName (Join-Path $Dir 'app')
 
+  # The launcher takes port 3000 (or %PORT%): whatever else is listening there is stopped first.
   $launcher = Join-Path $Dir 'truemeet.cmd'
-  Set-Content $launcher "@echo off`r`n`"$node`" `"$(Join-Path $Dir 'app\server.js')`" %*" -Encoding ASCII
+  $free = 'Get-NetTCPConnection -LocalPort $env:PORT -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) { Write-Host (''Port '' + $env:PORT + '': stopping '' + $p.ProcessName + '' (PID '' + $p.Id + '')''); Stop-Process -Id $p.Id -Force } }'
+  Set-Content $launcher "@echo off`r`nif not defined PORT set PORT=3000`r`npowershell -NoProfile -Command `"$free`"`r`n`"$node`" `"$(Join-Path $Dir 'app\server.js')`" %*" -Encoding ASCII
   Say "Installed. Start it any time with: $launcher"
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue
@@ -59,5 +61,5 @@ try {
 
 if (-not $env:TRUEMEET_NO_START) {
   Say 'Starting TrueMeet (Ctrl+C to stop)...'
-  & $node (Join-Path $Dir 'app\server.js')
+  & (Join-Path $Dir 'truemeet.cmd')
 }

@@ -58,7 +58,21 @@ tar -xzf "$tmp/app.tar.gz" -C "$tmp/app" --strip-components=1
 rm -rf "$DIR/app" && mv "$tmp/app" "$DIR/app"
 
 mkdir -p "$DIR/bin"
-printf '#!/bin/sh\nexec "%s" "%s" "$@"\n' "$NODE" "$DIR/app/server.js" > "$DIR/bin/truemeet"
+cat > "$DIR/bin/truemeet" <<EOF
+#!/bin/sh
+# Starts TrueMeet on port 3000 (or \$PORT). Whatever else is listening there is stopped first.
+port=\${PORT:-3000}
+if command -v lsof >/dev/null 2>&1; then pids=\$(lsof -ti "tcp:\$port" -sTCP:LISTEN 2>/dev/null)
+elif command -v fuser >/dev/null 2>&1; then pids=\$(fuser "\$port/tcp" 2>/dev/null)
+else pids=; fi
+if [ -n "\$pids" ]; then
+  for pid in \$pids; do name=\$(ps -o comm= -p "\$pid" 2>/dev/null); echo "Port \$port: stopping \${name:-a process} (PID \$pid)"; done
+  kill \$pids 2>/dev/null
+  i=0; while [ \$i -lt 30 ] && kill -0 \$pids 2>/dev/null; do sleep 0.1; i=\$((i + 1)); done
+  kill -9 \$pids 2>/dev/null
+fi
+PORT=\$port exec "$NODE" "$DIR/app/server.js" "\$@"
+EOF
 chmod +x "$DIR/bin/truemeet"
 say "Installed. Start it any time with: $DIR/bin/truemeet"
 
