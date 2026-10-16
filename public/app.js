@@ -6,6 +6,7 @@ import { awayMonitor, burstDetector, chooseFocus, collisionDetector, crosstalkDe
 import { RING, agoLabel, captureFrame, cardSlot, createRing, cropToDataUrl, fitWithin, normRect } from './timemachine.js';
 import { LEDGER_BEGIN, LEDGER_END, canonical, createIdentity, fingerprint, proposalPayload, sign, verify, verifyLedger } from './ledger.js';
 import { createSpatialMixer } from './spatial.js';
+import { analyze, hasDevanagari, renderAnswer, renderBasis, renderIntent, speakable, transliterate } from './copilot.js';
 
 const $ = (s) => document.querySelector(s);
 const on = (sel, fn) => document.querySelectorAll(sel).forEach((el) => el.addEventListener('click', fn));
@@ -168,7 +169,7 @@ async function handle(m) {
       if (!p || (m.final && seenNid(m.nid))) return;
       const text = String(m.text).slice(0, 500);
       caption(p, text, !!m.final, m.lang);
-      if (m.final) directorCaption(p, text);
+      if (m.final) { directorCaption(p, text); copilotFor(p, text, m.lang); }
       return;
     }
     case 'ink': { const sender = m.from === me.id ? L : p; return sender && onInk(sender, m); } // pins echo back to their author
@@ -485,16 +486,22 @@ function translator(src, dst) {
   }
   return translators.get(k);
 }
-async function translate(text, lang) {
-  const src = baseLang(lang);
-  if (!target || src === target) return null;
-  const t = await translator(src, target);
-  return t ? t.translate(text).catch(() => null) : null;
+const translations = new Map(); // `${src}>${dst}\n${text}` → Promise<string|null>, bounded
+function translateTo(text, src, dst) {
+  if (!dst || src === dst) return Promise.resolve(null);
+  const k = `${src}>${dst}\n${text}`;
+  if (!translations.has(k)) {
+    if (translations.size >= 300) translations.delete(translations.keys().next().value);
+    translations.set(k, translator(src, dst).then((t) => (t ? t.translate(text) : null)).catch(() => null));
+  }
+  return translations.get(k);
 }
+const translate = (text, lang) => translateTo(text, baseLang(lang), target);
 function setTarget(lang) {
   target = lang;
   store.set('truemeet-tl', lang);
   translators.clear();
+  translations.clear();
   if (!lang) return toast('Caption translation off', 'languages');
   if (!CAPS.translate) { $('#tlSel').value = target = ''; toast('On-device translation isn’t available in this browser (needs Chrome 138+)', 'languages'); return; }
   // Created inside this user gesture so Chrome may download the language models.
@@ -505,7 +512,7 @@ function caption(p, text, final, lang) {
   let el = capEls.get(p.id);
   if (!el) {
     el = document.createElement('div');
-    el.innerHTML = '<b></b><span></span>';
+    el.innerHTML = '<b></b><span></span><em></em>';
     el.querySelector('b').textContent = p === L ? 'You' : p.name;
     $('#captions').append(el);
     capEls.set(p.id, el);
@@ -514,17 +521,137 @@ function caption(p, text, final, lang) {
   span.textContent = text;
   clearTimeout(el.timer);
   el.timer = setTimeout(() => { el.remove(); capEls.delete(p.id); }, 4000);
+  // Live translation of every caption update, interim ones too; only the newest result is shown.
+  const live = p !== L && target && baseLang(lang) !== target ? translate(text, lang) : null;
+  if (live) {
+    const seq = (el.seq = (el.seq ?? 0) + 1);
+    live.then((tr) => {
+      if (!tr || el.seq !== seq) return;
+      span.textContent = tr;
+      el.querySelector('em').textContent = `${baseLang(lang).toUpperCase()} → ${target.toUpperCase()}`;
+    });
+  }
   if (!final) return;
   const { li, entry } = addEntry('#transcript', transcript, p.name, text, false);
-  if (p === L) return;
-  translate(text, lang).then((tr) => {
+  live?.then((tr) => {
     if (!tr) return;
     entry.tr = tr;
     li.querySelector('p').textContent = tr;
     li.querySelector('small').append(' · translated');
     li.title = text;
-    if (span.textContent === text) span.textContent = tr;
   });
+}
+
+// ---------- Private Co-Pilot ----------
+// When someone else asks, objects, names a price or a deadline, or wants a status update, only you
+// get a card: what they asked (in your language) and two ranked replies grounded in this meeting's
+// pins, highlights, proposals and snips — each in your language and in theirs, ready to read aloud
+// or send. Deterministic and offline by default; refined by on-device AI when Chrome has it ready.
+let copilotOn = store.get('truemeet-copilot') !== '0', copilotAt = 0, copilotView = null, lmBase = null;
+const AI_SCHEMA = { type: 'object', properties: { intent: { type: 'string' }, answers: { type: 'array', items: { type: 'string' }, minItems: 2, maxItems: 2 } }, required: ['intent', 'answers'] };
+function meetingState(question) {
+  return {
+    highlights: highlights.map(({ context, auto, reason, t }) => ({ context, auto, reason, t })),
+    pins: [...pinLog.values()].map(({ n, note, resolved, t }) => ({ n, note, resolved, t })),
+    proposals: [...proposals.values()].map(({ text, proposer, timestamp }) => ({ text, proposer, t: timestamp + skew })),
+    cards: boardCards(board).map(({ caption }) => ({ caption, t: 0 })),
+    captions: transcript.filter((x) => x.text !== question).slice(-12).map(({ name, text, t }) => ({ name, text, t })),
+  };
+}
+async function copilotFor(p, text, lang) {
+  if (!copilotOn || !me.id || Date.now() - copilotAt < 3000) return;
+  const speakerLang = baseLang(lang), mine = target || baseLang(me.lang);
+  const a = analyze({ text, lang: speakerLang, speaker: p.name, state: meetingState(text) });
+  if (!a) return;
+  copilotAt = Date.now();
+  const sayLang = a.lang; // templates exist for 7 languages; others fall back to English (translated below)
+  const view = {
+    source: 'from this meeting’s context', mine, speakerLang,
+    intent: renderIntent(a, mine, (await translateTo(text, speakerLang, mine)) ?? text),
+    basis: renderBasis(a, mine),
+    answers: await Promise.all(a.answers.map(async (ans) => {
+      const spoken = renderAnswer(a, ans, sayLang);
+      return { native: renderAnswer(a, ans, mine), spoken: sayLang === speakerLang ? spoken : (await translateTo(spoken, sayLang, speakerLang)) ?? spoken };
+    })),
+  };
+  copilotCard(view);
+  const ai = await aiSuggest(a, p, text, speakerLang).catch(() => null);
+  if (!ai || copilotView !== view) return;
+  const native = await Promise.all(ai.answers.map((x) => (mine === 'en' ? x : translateTo(x, 'en', mine))));
+  const spoken = await Promise.all(ai.answers.map((x) => (speakerLang === 'en' ? x : translateTo(x, 'en', speakerLang))));
+  if (native.some((x) => !x) || spoken.some((x) => !x)) return; // keep the natively-phrased answers rather than mix languages
+  copilotCard({ ...view, source: 'refined by on-device AI', answers: ai.answers.map((_, i) => ({ native: native[i], spoken: spoken[i] })) });
+}
+async function aiSuggest(a, p, text, speakerLang) {
+  if (!('LanguageModel' in self)) return null;
+  const inputs = ['en', ...(['es', 'de', 'fr', 'ja'].includes(speakerLang) ? [speakerLang] : [])];
+  const opts = { expectedInputs: [{ type: 'text', languages: inputs }], expectedOutputs: [{ type: 'text', languages: ['en'] }] };
+  if ((await LanguageModel.availability(opts)) !== 'available') return null; // never start a multi-GB model download unasked
+  lmBase ??= LanguageModel.create({ ...opts, initialPrompts: [{ role: 'system', content: 'You are a discreet meeting co-pilot. Given facts from the meeting and what a participant just said, suggest two short, concrete replies the user could say. Ground them only in the facts; never invent numbers, dates or commitments.' }] }).catch(() => (lmBase = null));
+  const base = await lmBase;
+  if (!base) return null;
+  const session = await base.clone();
+  try {
+    const facts = a.facts.map((f) => `- (${f.kind}) ${f.text}`).join('\n') || '- (none yet)';
+    const raw = await Promise.race([
+      session.prompt(`Meeting facts:\n${facts}\n\n${p.name} just said: "${text}"\n\nReturn JSON with "intent" (one short line: what is being asked) and "answers" (best reply first, then an alternative; first person, at most 25 words each).`, { responseConstraint: AI_SCHEMA }),
+      new Promise((_, fail) => setTimeout(() => fail(new Error('timeout')), 8000)),
+    ]);
+    const out = JSON.parse(raw);
+    if (typeof out?.intent !== 'string' || !Array.isArray(out.answers) || out.answers.length < 2 || !out.answers.every((x) => typeof x === 'string' && x.trim())) return null;
+    return { intent: out.intent.slice(0, 160), answers: out.answers.slice(0, 2).map((x) => x.trim().slice(0, 240)) };
+  } finally {
+    session.destroy?.();
+  }
+}
+function copilotCard(view) {
+  copilotView = view;
+  const el = document.createElement('section');
+  el.className = 'copilot glass';
+  el.setAttribute('role', 'complementary');
+  el.setAttribute('aria-label', 'Co-Pilot suggestions, visible only to you');
+  el.innerHTML = `<header>${icon('wand')}<div><b>Co-Pilot</b><small></small></div><button class="icon-btn" aria-label="Dismiss suggestions">${icon('x')}</button></header><p class="cp-intent"></p><ol class="cp-answers"></ol><p class="cp-basis"></p>`;
+  el.querySelector('small').textContent = `Only you can see this · ${view.source}`;
+  el.querySelector('.cp-intent').textContent = view.intent;
+  el.querySelector('.cp-basis').textContent = view.basis;
+  const bilingual = view.mine !== view.speakerLang;
+  const dismiss = () => { if (copilotView === view) copilotView = null; el.remove(); };
+  view.answers.forEach((ans) => {
+    const li = document.createElement('li');
+    li.innerHTML = `<p class="cp-native"><span class="cp-tag"></span><span class="cp-text"></span></p><p class="cp-spoken"><span class="cp-tag"></span><span class="cp-say"></span></p><p class="cp-pron"></p><div class="cp-actions"><button class="btn ghost xs cp-read">${icon('waves')}Read aloud</button><button class="btn primary xs cp-send">${icon('send')}Send</button></div>`;
+    const [nativeTag, spokenTag] = li.querySelectorAll('.cp-tag');
+    nativeTag.textContent = view.mine.toUpperCase();
+    nativeTag.hidden = !bilingual;
+    li.querySelector('.cp-text').textContent = ans.native;
+    li.querySelector('.cp-spoken').hidden = !bilingual; // one language in common: one line is enough
+    spokenTag.textContent = view.speakerLang.toUpperCase();
+    const say = speakable(ans.spoken, view.speakerLang);
+    li.querySelector('.cp-say').textContent = say;
+    const pron = hasDevanagari(say) && view.mine !== 'hi' ? transliterate(say) : '';
+    li.querySelector('.cp-pron').textContent = pron ? `Say it: ${pron}` : '';
+    li.querySelector('.cp-pron').hidden = !pron;
+    li.querySelector('.cp-read').onclick = () => readAloud(say, view.speakerLang);
+    li.querySelector('.cp-send').onclick = () => {
+      send({ type: 'chat', text: ans.spoken });
+      addChat(me.name, ans.spoken, true);
+      toast('Sent to the meeting chat', 'send');
+      dismiss();
+    };
+    el.querySelector('.cp-answers').append(li);
+  });
+  el.querySelector('header .icon-btn').onclick = dismiss;
+  const expire = () => (copilotView !== view ? null : el.matches(':hover, :focus-within') ? setTimeout(expire, 10_000) : dismiss());
+  setTimeout(expire, 60_000);
+  $('#copilot').replaceChildren(el);
+}
+function readAloud(text, l) {
+  if (!('speechSynthesis' in window)) return toast('Read-aloud isn’t available in this browser', 'waves');
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text);
+  u.lang = l;
+  const voice = speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith(l));
+  if (voice) u.voice = voice;
+  speechSynthesis.speak(u);
 }
 
 // ---------- Chat, transcript, highlights, reactions ----------
@@ -561,7 +688,7 @@ function addMark({ name, context, auto = false, reason, t = Date.now() }) {
 }
 function addNote(kind, title, body) {
   const li = document.createElement('li');
-  li.className = `mark ${kind}`;
+  li.className = `note note-${kind}`; // namespaced: never collide with global classes like .mark (logo) or .pin (tile button)
   li.innerHTML = `${icon({ auto: 'wand', pin: 'pin-drop', proposal: 'stamp' }[kind] ?? 'bookmark')}<div><small></small><p></p></div>`;
   li.querySelector('small').textContent = title;
   li.querySelector('p').textContent = body;
@@ -1447,6 +1574,7 @@ function leave(reason = 'You left the meeting') {
   renderKnocks();
   closePinPop();
   $('#notices').replaceChildren();
+  $('#copilot').replaceChildren();
   autoFocusId = null;
   setBoard(false);
   $('#endTitle').textContent = reason;
@@ -1593,6 +1721,13 @@ $('#tlSel').append(...LANGS.map(([v, label]) => new Option(label, v)));
 $('#tlSel').value = target;
 $('#tlSel').onchange = (e) => setTarget(e.target.value);
 $('#waitToggle').onchange = (e) => send({ type: 'waiting', on: e.target.checked });
+$('#copilotToggle').checked = copilotOn;
+$('#copilotToggle').onchange = (e) => {
+  copilotOn = e.target.checked;
+  store.set('truemeet-copilot', copilotOn ? '1' : '0');
+  if (!copilotOn) $('#copilot').replaceChildren();
+  toast(copilotOn ? 'Co-Pilot on — private reply suggestions when someone asks you something' : 'Co-Pilot off', 'wand');
+};
 $('#chatForm').onsubmit = (e) => {
   e.preventDefault();
   const text = $('#chatInput').value.trim();

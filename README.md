@@ -56,6 +56,21 @@ Requires Node.js 24.2 or later. It has no npm dependencies.
   - That exact region is cropped from the video at source resolution, correcting for letterboxing, and lands on everyone's whiteboard as a captioned card.
   - Cards sit in a side-by-side grid so the team can annotate and compare captured states while the presenter moves on. Late joiners get them too.
 
+**Live Polyglot + private "Best Answer" Co-Pilot**
+- **Live cross-language captions**: pick your language under More → Translate captions. Every caption from someone speaking another language is translated on your device as they speak, interim words included, with an `EN → ES` tag. Results are cached and the newest always wins.
+- **Co-Pilot**:
+  - When someone else asks a question, raises an objection, names a price or a deadline, or asks for a status update, you get a card **only you can see**.
+  - The card shows what they're asking, in your language, plus **two ranked replies** grounded in the meeting's own pins, highlights, proposals, whiteboard snips and recent captions.
+  - Each reply appears in **your language and in theirs**. The version in their language is phrased for reading aloud ("$5k" becomes "5 thousand dollars", and Hindi gets a romanized "Say it: …" guide). **Read aloud** previews it with speech synthesis; **Send** posts it to the meeting chat in their language with one click.
+  - `public/copilot.js` is deterministic and offline:
+    - intent detection with Unicode-aware whole-word cues in English, Spanish, French, German, Hindi, Portuguese and Italian
+    - date, money and percentage extraction
+    - intent-weighted retrieval (for a status question, current-state pins outrank decisions; for deadlines, decisions come first)
+    - reply templates written natively in all seven languages
+  - Meeting facts are quoted verbatim, never machine-translated, so a commitment reads exactly as it was written.
+  - When Chrome's on-device **LanguageModel** (Prompt API) is already `available`, replies are refined with a JSON-schema-constrained prompt grounded in the same facts, then translated on-device. TrueMeet never starts a model download on its own.
+  - Toggle under More → Co-Pilot suggestions.
+
 **Time-travel catch-up**
 - The server keeps a bounded buffer per room: the last 40 final caption lines and up to 200 highlights.
 - People admitted from the waiting room, or joining more than 30 seconds into a meeting, get a dismissible **Catch-up card**. It shows how long the meeting has run, key moments (incl. `[Auto]` ones), recent conversation, and buttons for the whiteboard and the notes.
@@ -116,6 +131,7 @@ npm start
 - `public/director.js`: Auto-Mode decision logic as pure functions, unit-tested in `director.test.js`: phrase triggers, burst/crosstalk/collision detectors, turn order, hesitation detector, focus choice with dwell, away monitor, frame diff.
 - `public/timemachine.js`: rewind ring buffer and frame geometry (crop, fit, whiteboard slots), with thin capture helpers. Unit-tested.
 - `public/ledger.js`: canonical JSON, ECDSA identities, sign/verify, and ledger verification. It runs unchanged in browsers, in the server, and in offline verification. Unit-tested, including tamper cases.
+- `public/copilot.js`: Co-Pilot intent detection, entity extraction, context retrieval, native-language reply templates, read-aloud phrasing and Devanagari romanization. Pure and unit-tested in `copilot.test.js`.
 - `public/spatial.js`: the whisper's Web Audio mix, engaged only while a whisper is active, so Chrome's normal echo-cancellation path is used the rest of the time.
 - `public/ink.js`: one ink engine for annotation, pins and the whiteboard.
   - Strokes use normalized coordinates over the content rectangle, so letterboxed video lines up for everyone.
@@ -156,6 +172,12 @@ npm start
     - snip a live region onto the whiteboard
     - promote a highlight to a proposal; two people sign; the exported ledger verifies offline and a tampered copy fails
     - whisper privacy measured at the third participant: their audio level for the whisperer is 0 while the partner still hears them
+  - `e2e/copilot.mjs` (part of `npm run test:e2e:real`, about 10 s):
+    - Ada asks in English and Bo has chosen Spanish.
+    - Bo sees the caption translated on-device.
+    - Bo gets a private Co-Pilot card: the question in Spanish, plus two replies grounded in the meeting's whiteboard pin and proposal, in Spanish and in English.
+    - Ada never sees the card.
+    - Bo's one-click Send delivers the English reply to Ada's chat.
   - All suites assert zero console errors.
 
 ## Privacy notes
@@ -164,7 +186,7 @@ npm start
 - Screen Time Machine frames stay in each viewer's memory; only frames you explicitly beam leave your browser, and only to the presenter. Snips go to the whiteboard, like drawings.
 - Ledger private keys are non-extractable and never leave the tab. Only public keys and signatures are shared.
 - Chat, captions and pins already pass through it as signaling text. For catch-up, the server now keeps the last 40 final caption lines and up to 200 highlights per room, **in memory only**, dropped when the room empties.
-- Away detection and talk-time are computed locally.
+- Away detection, talk-time and the Co-Pilot run entirely in your browser. A Co-Pilot reply leaves your device only when you click Send.
 - Captions use the browser's speech service (in Chrome this may use Google's servers). Translation runs on-device.
 
 ## Trademarks

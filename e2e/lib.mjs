@@ -106,3 +106,40 @@ export const opaquePixels = (p, sel) => p.evaluate((sel) => {
   for (let i = 3; i < d.length; i += 4) if (d[i] > 200) n++;
   return n;
 }, sel);
+
+// Make sure Chrome's on-device translation (TranslateKit + en→es pack) is installed in a persistent
+// profile. Returns true, or the reason it isn't available (offline, unsupported).
+export async function translationReady(t, ctx) {
+  // A real user gesture → Translator.create(); first time this installs the language pack, and
+  // Chrome's TranslateKit library is pulled via chrome://components if it's still missing.
+  const p = t.wire(await ctx.newPage(), 'bootstrap');
+  await p.goto(t.base);
+  const tryCreate = async () => {
+    await p.evaluate(() => {
+      document.querySelector('#tm-boot')?.remove();
+      const b = Object.assign(document.createElement('button'), { id: 'tm-boot', textContent: 'boot' });
+      b.style.cssText = 'position:fixed;inset:0 auto auto 0;z-index:999';
+      b.onclick = async () => {
+        try { window.__boot = await (await Translator.create({ sourceLanguage: 'en', targetLanguage: 'es' })).translate('Friday'); }
+        catch (e) { window.__boot = `ERR ${e.message}`; }
+      };
+      document.body.append(b);
+      window.__boot = null;
+    });
+    await p.click('#tm-boot');
+    return p.waitForFunction(() => window.__boot, null, { timeout: 120_000 }).then((h) => h.jsonValue());
+  };
+  if (!(await p.evaluate(() => 'Translator' in self))) return 'Translator API missing';
+  let r = await tryCreate();
+  if (r.startsWith('ERR')) {
+    await p.goto('chrome://components');
+    await p.evaluate(() => [...document.querySelectorAll('.component')].find((c) => /Chrome TranslateKit -/.test(c.innerText))?.querySelector('button')?.click());
+    await p.waitForFunction(() => /Chrome TranslateKit - Version: (?!0\.0\.0\.0)/.test(document.body.innerText), null, { timeout: 120_000 }).catch(() => {});
+    await p.goto(t.base);
+    r = await tryCreate();
+  }
+  // The bootstrap page logs Chrome's own "Built-In AI" banner/library errors; they aren't the app's.
+  t.errors.splice(0, Infinity, ...t.errors.filter((e) => !e.startsWith('bootstrap:')));
+  await p.close();
+  return r.startsWith('ERR') ? r : true;
+}

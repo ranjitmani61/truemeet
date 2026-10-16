@@ -10,7 +10,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join as path } from 'node:path';
-import { assert, downloadNotes, join, liveVideo, suite } from './lib.mjs';
+import { assert, downloadNotes, join, liveVideo, suite, translationReady } from './lib.mjs';
 
 const t = await suite('real-browser capabilities');
 const media = path(tmpdir(), 'truemeet-e2e-media');
@@ -88,41 +88,7 @@ await ctxA.addInitScript(() => { // count View Transitions the app starts and fi
   };
 });
 
-async function translationReady() {
-  // A real user gesture → Translator.create(); first time this installs the language pack, and
-  // Chrome's TranslateKit library is pulled via chrome://components if it's still missing.
-  const p = t.wire(await ctxA.newPage(), 'bootstrap');
-  await p.goto(t.base);
-  const tryCreate = async () => {
-    await p.evaluate(() => {
-      document.querySelector('#tm-boot')?.remove();
-      const b = Object.assign(document.createElement('button'), { id: 'tm-boot', textContent: 'boot' });
-      b.style.cssText = 'position:fixed;inset:0 auto auto 0;z-index:999';
-      b.onclick = async () => {
-        try { window.__boot = await (await Translator.create({ sourceLanguage: 'en', targetLanguage: 'es' })).translate('Friday'); }
-        catch (e) { window.__boot = `ERR ${e.message}`; }
-      };
-      document.body.append(b);
-      window.__boot = null;
-    });
-    await p.click('#tm-boot');
-    return p.waitForFunction(() => window.__boot, null, { timeout: 120_000 }).then((h) => h.jsonValue());
-  };
-  if (!(await p.evaluate(() => 'Translator' in self))) return 'Translator API missing';
-  let r = await tryCreate();
-  if (r.startsWith('ERR')) {
-    await p.goto('chrome://components');
-    await p.evaluate(() => [...document.querySelectorAll('.component')].find((c) => /Chrome TranslateKit -/.test(c.innerText))?.querySelector('button')?.click());
-    await p.waitForFunction(() => /Chrome TranslateKit - Version: (?!0\.0\.0\.0)/.test(document.body.innerText), null, { timeout: 120_000 }).catch(() => {});
-    await p.goto(t.base);
-    r = await tryCreate();
-  }
-  // The bootstrap page logs Chrome's own "Built-In AI" banner/library errors; they aren't the app's.
-  t.errors.splice(0, Infinity, ...t.errors.filter((e) => !e.startsWith('bootstrap:')));
-  await p.close();
-  return r.startsWith('ERR') ? r : true;
-}
-const translation = await translationReady();
+const translation = await translationReady(t, ctxA);
 t.step(translation === true ? 'on-device translation models ready' : `translation unavailable here: ${translation}`);
 
 const room = `${t.base}/tst-real-${Date.now().toString(36)}`;
@@ -144,8 +110,8 @@ if (translation === true) {
   await a.keyboard.press('Escape');
   await a.waitForTimeout(500);
   await b.keyboard.press('l');
-  await a.waitForFunction(() => [...document.querySelectorAll('#transcript li:not(.mark) small')].some((s) => s.textContent.includes('translated')), null, { timeout: 30_000 });
-  const translated = await a.evaluate(() => { const li = [...document.querySelectorAll('#transcript li:not(.mark)')].at(-1); return { text: li.querySelector('p').textContent, original: li.title }; });
+  await a.waitForFunction(() => [...document.querySelectorAll('#transcript li:not(.note) small')].some((s) => s.textContent.includes('translated')), null, { timeout: 30_000 });
+  const translated = await a.evaluate(() => { const li = [...document.querySelectorAll('#transcript li:not(.note)')].at(-1); return { text: li.querySelector('p').textContent, original: li.title }; });
   assert.match(translated.text, /viernes/i, 'Spanish text shown');
   assert.equal(translated.original, 'Action item: Bo sends the launch deck by Friday', 'original kept as the tooltip');
   assert.match(await downloadNotes(a), /Bo: Action item: Bo sends the launch deck by Friday\n\s+→ .*viernes/i, 'notes keep original + translation');

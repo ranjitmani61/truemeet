@@ -97,7 +97,7 @@ t.step('C snipped a region of B’s live screen onto everyone’s whiteboard');
 // ===== 3. Decision ledger ======================================================================
 await a.keyboard.press('b');
 await openPanel(a, 'notes');
-await a.click('#transcript .mark .propose');
+await a.click('#transcript .note .propose');
 await a.fill('#notices [data-key="propose"] textarea', 'Ship v2 on Friday');
 await a.click('#notices [data-key="propose"] .btn.primary');
 for (const p of [a, b, c]) await p.waitForFunction(() => document.querySelector('#notices .notice.proposal blockquote')?.textContent === 'Ship v2 on Friday');

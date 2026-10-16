@@ -229,6 +229,7 @@
       <div id="alone" class="alone glass"><span>You’re the only one here.</span><button class="btn primary sm copy-link"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>Copy invite link</button></div>
       <div id="captions" class="captions" aria-live="polite"></div>
       <div id="floaters" class="floaters" aria-hidden="true"></div>
+      <div id="copilot" class="copilot-dock" aria-live="polite"></div>
       <div id="board" class="board" hidden>
         <canvas id="boardCanvas" aria-label="Shared whiteboard"></canvas>
         <div class="pins" id="boardPins"></div>
@@ -310,6 +311,7 @@
         <label class="switch"><svg class="i" aria-hidden="true"><use href="#i-waves"/></svg><span>Noise suppression</span><input type="checkbox" id="nsToggle" checked></label>
         <label class="switch" id="blurRow" hidden><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg><span>Background blur</span><input type="checkbox" id="blurToggle"></label>
         <label class="switch select-row"><svg class="i" aria-hidden="true"><use href="#i-languages"/></svg><span>Translate captions<em class="cap" id="tlCap"></em></span><select id="tlSel" aria-label="Translate captions to"></select></label>
+        <label class="switch"><svg class="i" aria-hidden="true"><use href="#i-wand"/></svg><span>Co-Pilot suggestions<em class="cap ok">Private</em></span><input type="checkbox" id="copilotToggle" checked></label>
         <button class="mark-btn"><svg class="i" aria-hidden="true"><use href="#i-bookmark"/></svg>Mark highlight<kbd>B</kbd></button>
         <button id="pipBtn"><svg class="i" aria-hidden="true"><use href="#i-pip"/></svg><span>Pop-out presenter view<em class="cap" id="popCap"></em></span></button>
         <button class="dl-notes"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download notes</button>

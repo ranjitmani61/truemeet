@@ -41,14 +41,14 @@ await b.click('#closePanel');
 
 // --- Auto-highlights: a caption phrase and a reaction burst (A is the only Auto-Mode user → director)
 await b.keyboard.press('l');
-await b.waitForFunction(() => [...document.querySelectorAll('#transcript .mark.auto small')].some((s) => s.textContent.includes('action item')), null, { timeout: 8000 });
+await b.waitForFunction(() => [...document.querySelectorAll('#transcript .note-auto small')].some((s) => s.textContent.includes('action item')), null, { timeout: 8000 });
 t.step('caption phrase → [Auto] action item, relayed to everyone');
 await b.click('[data-pop="#reactPop"]');
 await b.click('#reactPop button >> nth=0');
 await b.click('#reactPop button >> nth=1');
 await a.click('[data-pop="#reactPop"]');
 await a.click('#reactPop button >> nth=4');
-await b.waitForFunction(() => [...document.querySelectorAll('#transcript .mark.auto small')].some((s) => s.textContent.includes('reactions')), null, { timeout: 5000 });
+await b.waitForFunction(() => [...document.querySelectorAll('#transcript .note-auto small')].some((s) => s.textContent.includes('reactions')), null, { timeout: 5000 });
 await a.keyboard.press('Escape');
 await a.keyboard.press('b'); // manual highlight
 t.step('reaction burst → [Auto] reactions; manual highlight');
