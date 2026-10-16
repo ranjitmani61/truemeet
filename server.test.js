@@ -357,7 +357,7 @@ test('proof-of-frame: server relays only signed frames that extend the sharer’
   const b = open('witness-room', 'Bo'), wb = await b.next();
   await a.until('join');
   const bo = await createIdentity(), eve = await createIdentity(), room = 'witness-room';
-  const frame = (last, dhash = '0f0f0f0f0f0f0f0f', t = Date.now(), key = bo.privateKey) => signFrame(key, room, last, dhash, t);
+  const frame = (last, dig = '0f0f0f0f0f0f0f0f00ff00ff00ff00ff', t = Date.now(), key = bo.privateKey) => signFrame(key, room, last, dig, t);
   const f1 = await frame(null);
   assert.equal(await post(wb, { type: 'witness-frame', ...f1 }), 409, 'not sharing');
   assert.equal(await post(wb, { type: 'state', state: { screen: true } }), 204);
@@ -367,11 +367,12 @@ test('proof-of-frame: server relays only signed frames that extend the sharer’
   await a.until('identity');
 
   assert.equal(await post(wb, { type: 'witness-frame', ...f1, sig: 'short' }), 400, 'schema');
-  assert.equal(await post(wb, { type: 'witness-frame', ...f1, dhash: 'ffffffffffffffff' }), 400, 'picture swapped after signing');
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1, digest: 'f'.repeat(32) }), 400, 'picture swapped after signing');
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1, digest: f1.digest.slice(0, 16) }), 400, 'a 64-bit digest is malformed');
   assert.equal(await post(wb, { type: 'witness-frame', ...(await frame(null, undefined, undefined, eve.privateKey)) }), 400, 'someone else’s key');
   assert.equal(await post(wb, { type: 'witness-frame', ...(await frame(null, undefined, Date.now() - 120_000)) }), 400, 'stale: a replay');
   const forged = { ...f1, prev: 'a'.repeat(64) };
-  forged.chain = await link(forged.prev, 1, forged.dhash, forged.t);
+  forged.chain = await link(forged.prev, 1, forged.digest, forged.t);
   assert.equal(await post(wb, { type: 'witness-frame', ...forged }), 409, 'frame #1 must start at genesis');
 
   assert.equal(await post(wb, { type: 'witness-frame', ...f1, extra: 1, to: wa.id }), 204);

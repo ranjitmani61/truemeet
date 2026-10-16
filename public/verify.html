@@ -43,7 +43,7 @@
   </main>
   <script type="module">
     import { parseLedger, verifyLedger } from '/ledger.js';
-    import { WITNESS, frameHash, matchFrame, parseWitness, verifyWitness } from '/witness.js';
+    import { WITNESS, digest, parseWitness, rankFrames, verifyWitness } from '/witness.js';
     import { readLuma } from '/tracker.js';
 
     const $ = (s) => document.querySelector(s);
@@ -77,10 +77,10 @@
               `Signing key ${c.fingerprint} — the key folded into the safety code`));
           }
           if (shot) {
-            const [best] = matchFrame(v, shot.hash, 64);
-            out.push(best && best.distance <= WITNESS.match
-              ? row('ok', `Screenshot matches signed frame #${best.seq} of ${best.name}’s screen`, `${best.distance} of 64 bits differ · signed ${when(best.t)} · key ${best.fingerprint}`)
-              : row('bad', 'Screenshot matches no signed frame', best ? `Closest: frame #${best.seq} at ${best.distance} of 64 bits (≤ ${WITNESS.match} needed)` : 'No valid signed frames to compare with'));
+            const [best] = rankFrames(v, shot.digest), bits = (m) => `${m.layout}/64 layout · ${m.detail}/64 detail bits differ`;
+            out.push(best?.match
+              ? row('ok', `Screenshot matches signed frame #${best.seq} of ${best.name}’s screen`, `${bits(best)} · signed ${when(best.t)} · key ${best.fingerprint}`)
+              : row('bad', 'Screenshot matches no signed frame', best ? `Closest: frame #${best.seq} — ${bits(best)} (at most ${WITNESS.match.layout} and ${WITNESS.match.detail} needed)` : 'No valid signed frames to compare with'));
           }
         } else if (shot) out.push(row('info', 'These notes have no screen witness to compare the screenshot with.'));
         if (!ledger && !witness) out.push(row('bad', 'No TrueMeet decision ledger or screen witness found in this file.'));
@@ -94,7 +94,7 @@
       shot = null;
       if (file) {
         const bmp = await createImageBitmap(file).catch(() => null);
-        if (bmp) { shot = { hash: frameHash(readLuma(bmp, ...WITNESS.read)) }; bmp.close(); }
+        if (bmp) { shot = { digest: digest(readLuma(bmp, ...WITNESS.read)) }; bmp.close(); }
       }
       render();
     };

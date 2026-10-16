@@ -7,7 +7,7 @@ import { awayMonitor, burstDetector, chooseFocus, collisionDetector, crosstalkDe
 import { RING, agoLabel, captureFrame, cardSlot, createRing, cropToDataUrl, fitWithin, normRect } from './timemachine.js';
 import { LEDGER_BEGIN, LEDGER_END, b64u, canonical, createIdentity, fingerprint, proposalPayload, sign, verify, verifyLedger } from './ledger.js';
 import { TRACK, capture, createAnchor, dock, readLuma, track } from './tracker.js';
-import { WITNESS, WITNESS_BEGIN, WITNESS_END, checkFrame, frameHash, hamming, signFrame, verifyWitness } from './witness.js';
+import { WITNESS, WITNESS_BEGIN, WITNESS_END, checkFrame, digest, distance, sameFrame, signFrame, verifyWitness } from './witness.js';
 import { createSpatialMixer } from './spatial.js';
 import { analyze, hasDevanagari, renderAnswer, renderBasis, renderIntent, speakable, transliterate } from './copilot.js';
 
@@ -1081,9 +1081,10 @@ function unpatch(p, patchId) { // my proposal, or any proposal on my screen: gon
 }
 
 // ---------- Proof-of-Frame witness ----------
-// While I share, every 2 s: dHash the frame I'm sending, chain it to the last one, sign it with my
-// ledger key, relay it. As a viewer: verify the signature and the chain, hash what my decoder
-// shows, and badge the share "Witness Verified · Frame #N" when the two agree (≤ 10 of 64 bits).
+// While I share, every 2 s: digest the frame I'm sending (dHash layout + eHash detail, 128 bits),
+// chain it to the last one, sign it with my ledger key, relay it. As a viewer: verify the signature
+// and the chain, digest what my decoder shows, and badge the share "Witness Verified · Frame #N"
+// when both bands agree.
 const MAX_WITNESS_FRAMES = 5400; // ponytail: 3 h of frames per chain kept for the notes; older ones are dropped
 const witnessChains = []; // every chain this tab signed or watched, for the notes
 let witnessOut = null, witnessBusy = false, grabber = null;
@@ -1107,7 +1108,7 @@ async function witnessTick() {
     const out = (witnessOut ??= { last: null, rec: chainRecord(me.name, identity.fingerprint, identity.jwk, true) });
     const luma = await shareLuma();
     if (!luma) return;
-    const f = await signFrame(identity.privateKey, room, out.last, frameHash(luma), Date.now() - skew);
+    const f = await signFrame(identity.privateKey, room, out.last, digest(luma), Date.now() - skew);
     if (witnessOut !== out) return; // the share ended meanwhile
     out.last = f;
     keep(out.rec.frames, f);
@@ -1117,23 +1118,23 @@ async function witnessTick() {
     witnessBusy = false;
   }
 }
-function sampleShares() { // what each viewer actually displays, hashed, for matching against signed frames
+function sampleShares() { // what each viewer actually displays, digested, for matching against signed frames
   const [w, h] = WITNESS.read, now = Date.now() - skew;
   for (const p of peers.values()) {
     if (!p.state.screen || !p.jwk || !p.video.videoWidth) continue;
-    (p.samples ??= []).push({ t: now, hash: frameHash(readLuma(p.video, w, h)) });
+    (p.samples ??= []).push({ t: now, digest: digest(readLuma(p.video, w, h)) });
     if (p.samples.length > 40) p.samples.shift();
   }
 }
 async function onWitness(p, m) {
   if (!p.jwk) return; // nothing to verify against yet
   p.wit ??= { last: null, misses: 0, rec: chainRecord(p.name, await fingerprint(p.jwk), p.jwk, false) }; // a new share starts a new chain (reset on share end)
-  const w = p.wit, f = { seq: m.seq, t: m.t, dhash: m.dhash, prev: m.prev, chain: m.chain, sig: m.sig };
+  const w = p.wit, f = { seq: m.seq, t: m.t, digest: m.digest, prev: m.prev, chain: m.chain, sig: m.sig };
   const why = await checkFrame(p.jwk, room, f, w.last); // never take the server's word for it
   if (p.wit !== w) return;
   if (why !== 'ok') { keep(w.rec.rejected, { seq: f.seq, t: f.t, why }); return witnessState(p, 'invalid', f.seq, why); }
   w.last = f;
-  const e = { ...f, seen: null, distance: null, verdict: 'pending' };
+  const e = { ...f, seen: null, layout: null, detail: null, verdict: 'pending' };
   keep(w.rec.frames, e);
   if (!p.witState) witnessState(p, 'pending', f.seq);
   setTimeout(() => judge(p, w, e), Math.max(0, f.t + skew + WITNESS.window[1] - Date.now())); // once my decoder has shown it
@@ -1141,8 +1142,8 @@ async function onWitness(p, m) {
 function judge(p, w, e) {
   const near = (p.samples ?? []).filter((x) => x.t >= e.t + WITNESS.window[0] && x.t <= e.t + WITNESS.window[1]);
   if (!near.length) { e.verdict = 'unseen'; return; } // my tile wasn't decoding then
-  const best = near.map((x) => ({ hash: x.hash, d: hamming(e.dhash, x.hash) })).reduce((a, b) => (b.d < a.d ? b : a));
-  Object.assign(e, { seen: best.hash, distance: best.d, verdict: best.d <= WITNESS.match ? 'valid' : 'mismatch' });
+  const best = near.map((x) => ({ seen: x.digest, ...distance(e.digest, x.digest) })).reduce((a, b) => (b.layout + b.detail < a.layout + a.detail ? b : a));
+  Object.assign(e, best, { verdict: sameFrame(best) ? 'valid' : 'mismatch' });
   if (p.wit !== w) return;
   w.misses = e.verdict === 'mismatch' ? w.misses + 1 : 0;
   if (e.verdict === 'valid') witnessState(p, 'verified', e.seq);
@@ -1191,11 +1192,11 @@ async function witnessSection() {
   if (!chains.length) return [];
   const signed = chains.filter((c) => c.frames.length);
   const witness = {
-    version: 1, room, exportedAt: new Date().toISOString(),
-    algorithm: 'dHash-64 of 9×8 luma cells · chain = SHA-256(prev:seq:dHash:t) · ECDSA P-256 + SHA-256 over canonical JSON {chain, dhash, prev, room, seq, t}',
+    version: 2, room, exportedAt: new Date().toISOString(),
+    algorithm: 'digest = dHash-64 (9×8 luma cells) + eHash-64 (8×8 tile edge energy vs median) · chain = SHA-256(prev:seq:digest:t) · ECDSA P-256 + SHA-256 over canonical JSON {chain, digest, prev, room, seq, t}',
     chains: signed.map(({ name, fingerprint: fp, jwk, frames }) => ({
       name, fingerprint: fp, jwk,
-      frames: frames.map(({ seq, t, dhash, prev, chain, sig, seen, distance }) => ({ seq, t, dhash, prev, chain, sig, ...(seen && { seen, distance }) })),
+      frames: frames.map(({ seq, t, digest: dig, prev, chain, sig, seen, layout, detail }) => ({ seq, t, digest: dig, prev, chain, sig, ...(seen && { seen, layout, detail }) })),
     })),
   };
   const check = await verifyWitness(witness);
@@ -1205,7 +1206,7 @@ async function witnessSection() {
     lines.push(`${c.mine ? 'Your screen (frames you signed)' : `${c.name}’s screen`} · key ${c.fingerprint} · ${c.frames.length} signed frame${c.frames.length === 1 ? '' : 's'}`);
     c.frames.forEach((f, i) => {
       const word = !verdicts[i]?.valid ? 'INVALID' : c.mine ? 'SIGNED' : { valid: 'VALID', mismatch: 'MISMATCH', unseen: 'UNSEEN' }[f.verdict] ?? 'PENDING';
-      lines.push(`    ${word.padEnd(8)} #${f.seq} · ${clockS(f.t + skew)} · dHash ${f.dhash}${f.distance != null ? ` · ${f.distance}/64 bits from what you saw` : ''}`);
+      lines.push(`    ${word.padEnd(8)} #${f.seq} · ${clockS(f.t + skew)} · digest ${f.digest}${f.seen ? ` · ${f.layout}/64 layout + ${f.detail}/64 detail bits from what you saw` : ''}`);
     });
     for (const r of c.rejected) lines.push(`    REJECTED #${r.seq} · ${clockS(r.t + skew)} · ${r.why}`);
   }

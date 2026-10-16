@@ -66,12 +66,20 @@ Requires Node.js 24.2 or later. It has no npm dependencies.
   - Everyone, the presenter included and inside the pop-out presenter window, sees the region's **live** pixels at the new spot with a "Proposed move · Ada" tag, an arrow from the old spot, and a background plate where it was.
   - The plate is a Coons patch (transfinite interpolation) through the live pixels ringing the region. It reproduces solid and linear-gradient UI backgrounds exactly and refreshes about 8 times a second.
   - The `screen-patch` message is schema-checked (both places inside the frame, at least 2% in size), room-wide, and allowed only while the sharer allows annotation. The author or the sharer dismisses it for everyone; anyone can hide it for themselves.
-- **Proof-of-Frame witness**: while you share, every 2 s your browser computes a 64-bit dHash of the frame it is sending (9×8 luma cells). It chains it (`chain = SHA-256(prev:seq:dHash:t)`) and signs it with your decision-ledger key, the same key that is folded into the safety code.
+- **Proof-of-Frame witness**: while you share, every 2 s your browser computes a 128-bit **dual-band perceptual digest** of the frame it is sending. It chains it (`chain = SHA-256(prev:seq:digest:t)`) and signs it with your decision-ledger key, the same key that is folded into the safety code.
+  - **Layout band**, 64 bits: dHash, comparing the mean luma of each of 9×8 cells with its right neighbour.
+  - **Detail band**, 64 bits: eHash, the edge energy (mean |∂x|+|∂y|) of each of 8×8 tiles compared with the median non-empty tile. Box averages dilute thin UI detail into a flat backdrop; edge energy doesn't. Tiles under a noise floor of 8 levels count as flat, so codec noise never sets a detail bit.
+  - Two digests show the same frame when **both** bands are close: at most 7 differing layout bits and 8 detail bits.
   - The server refuses frames that don't verify, don't extend your chain, are replayed, or are more than 30 s old (`witness-frame`, at most one per 500 ms).
-  - Each viewer verifies the signature and the chain again. It hashes what its own decoder displayed in the window from t−0.4 s to t+2.2 s, and the share's badge reads **Witness Verified · Frame #N** when the two are within 10 of 64 bits. Two mismatches in a row show **Frame Mismatch**; a bad signature or broken chain shows **Tamper detected**.
+  - Each viewer verifies the signature and the chain again. It digests what its own decoder displayed in the window from t−0.4 s to t+2.2 s, and the share's badge reads **Witness Verified · Frame #N** when both bands agree. Two mismatches in a row show **Frame Mismatch**; a bad signature or broken chain shows **Tamper detected**.
   - Clicking the badge saves the exact frame on screen as PNG evidence. **Download notes** lists every frame (VALID / MISMATCH / INVALID, with the measured bit distance) plus a machine-verifiable chain.
   - **`/verify.html`** re-checks the notes offline in the browser (ledger and witness), and proves which signed frame a saved screenshot matches.
-  - **What it proves, and its limit**: the witness proves *which screen* the signer was showing and that your video matched it. It is perceptual, not pixel-exact: a single edited line of text is still "the same frame". Measured on synthetic UI screens, the same screen after codec damage differs by 0–4 bits. Different screens that share a flat backdrop differ by 16.6 bits on average, but 12% of such pairs fall within 10 bits, so a look-alike substitute can pass. A 256-bit dHash didn't separate them cleanly either (codec damage up to 28/256, different screens down to 19/256), so the 64-bit design was kept.
+  - **What it proves, measured** (`witness.test.js`, `e2e/deep-tech.mjs`):
+    - **Real WebRTC:** frames match at 0–1 layout and 0 detail bits (3 runs, 30 frames).
+    - **Synthetic codec damage:** a harsher simulation, applied once and twice, stays within 5 layout and 8 detail bits on 90 synthetic UI screens.
+    - **Look-alike screens:** 64-bit dHash alone mistook 51 of 435 pairs (12%) for the same frame. The dual-band digest mistakes **0 of 435** on that benchmark, and **10 of 1770 (0.6%) on 60 more screens outside the benchmark**, down from 235 (13.3%).
+    - **The remaining ceiling:** at 128 bits some screens really are look-alikes (same layout, same busy tiles). It is perceptual, not pixel-exact: one edited line of text is still "the same frame". It proves *which screen* was shown, not every character on it.
+    - **What was ruled out:** a 256-bit mean-grid dHash didn't separate look-alikes either. A noise floor of 3 or less let codec noise flip up to 26 detail bits.
 
 **Live Polyglot + private "Best Answer" Co-Pilot**
 - **Live cross-language captions**: pick your language under More → Translate captions. Every caption from someone speaking another language is translated on your device as they speak, interim words included, with an `EN → ES` tag. Results are cached and the newest always wins.
@@ -156,7 +164,7 @@ npm start
 - `public/copilot.js`: Co-Pilot intent detection, entity extraction, context retrieval, native-language reply templates, read-aloud phrasing and Devanagari romanization. Pure and unit-tested in `copilot.test.js`.
 - `public/spatial.js`: the whisper's Web Audio mix, engaged only while a whisper is active, so Chrome's normal echo-cancellation path is used the rest of the time.
 - `public/tracker.js`: living anchors (ZNCC block matching, sub-pixel peaks, four-phase coarse re-lock, docking) and the proposed-move pixel math (Coons-patch plate, tether geometry). Pure and unit-tested in `tracker.test.js`.
-- `public/witness.js`: dHash, Hamming distance, the SHA-256 frame chain, ECDSA frame signing and checking, offline verification and screenshot matching. It runs unchanged in browsers, in the server and in `verify.html`. Unit-tested in `witness.test.js`.
+- `public/witness.js`: the dual-band digest (dHash + eHash), per-band Hamming distance, the SHA-256 frame chain, ECDSA frame signing and checking, offline verification and screenshot matching. It runs unchanged in browsers, in the server and in `verify.html`. Unit-tested in `witness.test.js`.
 - `public/ink.js`: one ink engine for annotation, pins, proposed moves and the whiteboard.
   - Strokes use normalized coordinates over the content rectangle, so letterboxed video lines up for everyone.
   - Pointer input uses coalesced events and is batched about 25 times per second.
@@ -179,7 +187,8 @@ npm start
     - refuses ambiguous duplicates; ignores flat templates
     - also covers the Coons plate (a gradient reconstructed to ±1 level) and the move geometry
   - Proof-of-Frame (`witness.test.js`):
-    - dHash: codec damage stays within 10 bits; unrelated images differ by more than 20; the measured ceiling on look-alike screens is pinned
+    - dual-band digest: 90 synthetic UI screens stay "the same frame" through one and two codec passes; unrelated images stay apart
+    - look-alikes: 0/435 on the benchmark versus 51/435 for dHash alone; the held-out ceiling (≤ 10/1770) is pinned
     - the signed chain verifies; a swapped picture, a forged link, a gap, a replay, another key or another room are each rejected
     - an edited export pinpoints the edited frame
   - Server: pin templates and `screen-patch` validated and room-wide; `witness-frame` relayed only when signed, chained, fresh and not too frequent.
@@ -222,11 +231,11 @@ npm start
     - **Living anchors**: Ada pins an orange badge. As it glides across Bo's screen, the pin follows it through at least 4 intermediate positions on every participant's own decoded video, including Bo's. It docks at the bottom edge as "Off-screen" when the badge is hidden, and re-locks within 0.02 when the badge reappears elsewhere.
       - Measured here: about 7 fps decoded in headless Chrome. A pin can only move as often as its video delivers frames.
     - **Proposed move**: Cy lifts the magenta card and drops it lower down. Bo's own tile, Ada's tile and Bo's real pop-out presenter window show card pixels at the new spot and the blue gradient plate where it was (read back from the canvas).
-    - **Proof-of-Frame**: Ada's and Cy's badges reach "Witness Verified · Frame #N" across real compression (measured 1/64 bits). The exported notes list the frames VALID, and the chain verifies offline in Node.
+    - **Proof-of-Frame**: Ada's and Cy's badges reach "Witness Verified · Frame #N" across real compression (measured 0–1/64 layout, 0/64 detail bits). The exported notes list the frames VALID, and the chain verifies offline in Node.
     - **`verify.html`**:
       - Ada's saved frame matches a signed frame.
-      - A screenshot of the meeting window matches none (closest at 36/64 bits).
-      - An edited dHash in the notes is flagged INVALID.
+      - A screenshot of the meeting window matches none (closest at 37/64 layout and 9–11/64 detail bits).
+      - An edited digest in the notes is flagged INVALID.
   - All suites assert zero console errors.
 
 ## Privacy notes
@@ -234,7 +243,7 @@ npm start
 - Audio and video never touch the server.
 - Screen Time Machine frames stay in each viewer's memory; only frames you explicitly beam leave your browser, and only to the presenter. Snips go to the whiteboard, like drawings.
 - Ledger private keys are non-extractable and never leave the tab. Only public keys and signatures are shared.
-- Living anchors send only a 16×16 grayscale patch with each pin. Tracking runs locally. Proof-of-Frame sends only 64-bit hashes, chain hashes and signatures, never pixels; saved evidence frames go only to your own downloads.
+- Living anchors send only a 16×16 grayscale patch with each pin. Tracking runs locally. Proof-of-Frame sends only 128-bit digests, chain hashes and signatures, never pixels; saved evidence frames go only to your own downloads.
 - Chat, captions and pins already pass through it as signaling text. For catch-up, the server now keeps the last 40 final caption lines and up to 200 highlights per room, **in memory only**, dropped when the room empties.
 - Away detection, talk-time and the Co-Pilot run entirely in your browser. A Co-Pilot reply leaves your device only when you click Send.
 - Captions use the browser's speech service (in Chrome this may use Google's servers). Translation runs on-device.

@@ -151,14 +151,14 @@ const evidence = await readFile(await shot.path());
 await a.waitForTimeout(2500); // the frame just saved gets judged
 const notes = await downloadNotes(a);
 assert.match(notes, /SCREEN WITNESS/);
-const valid = notes.match(/^ {4}VALID +#\d+ · .+ · (\d+)\/64 bits from what you saw$/gm) ?? [];
+const valid = notes.match(/^ {4}VALID +#\d+ · .+ · \d+\/64 layout \+ \d+\/64 detail bits from what you saw$/gm) ?? [];
 assert.ok(valid.length >= 2, `frames listed VALID in the notes:\n${notes.slice(notes.indexOf('SCREEN WITNESS'), notes.indexOf('Machine-verifiable copy (drop'))}`);
 assert.doesNotMatch(notes, /^ {4}(INVALID|MISMATCH|REJECTED) /m);
-const distances = valid.map((l) => Number(l.match(/(\d+)\/64/)[1]));
+const bands = valid.map((l) => l.match(/(\d+)\/64 layout \+ (\d+)\/64 detail/).slice(1).map(Number)), span = (k) => `${Math.min(...bands.map((b) => b[k]))}–${Math.max(...bands.map((b) => b[k]))}`;
 const offline = await verifyWitness(parseWitness(notes));
 assert.equal(offline.valid, true, 'the exported chain verifies offline (Node)');
 assert.equal(offline.chains[0].name, 'Bo');
-t.step(`notes: ${valid.length} frames VALID (Hamming ${Math.min(...distances)}–${Math.max(...distances)} of 64 bits); chain verifies offline`);
+t.step(`notes: ${valid.length} frames VALID (layout ${span(0)}/64, detail ${span(1)}/64 bits across real compression); chain verifies offline`);
 
 const v = t.wire(await a.context().newPage(), 'verify');
 await v.goto(`${t.base}/verify.html`);
@@ -173,7 +173,7 @@ const other = await a.screenshot(); // the whole meeting window: not the shared 
 await v.setInputFiles('#shot', { name: 'other.png', mimeType: 'image/png', buffer: other });
 await v.waitForFunction(() => /Screenshot matches no signed frame/.test(document.querySelector('#out').textContent));
 const closest = await v.$eval('#out .res.bad small', (el) => el.textContent);
-const tampered = notes.replace(/("dhash": ")([0-9a-f])/, (_, k, d) => k + (d === '0' ? '1' : '0'));
+const tampered = notes.replace(/("digest": ")([0-9a-f])/, (_, k, d) => k + (d === '0' ? '1' : '0'));
 await v.setInputFiles('#notes', { name: 'notes.txt', mimeType: 'text/plain', buffer: Buffer.from(tampered) });
 await v.waitForFunction(() => /INVALID: #\d+/.test(document.querySelector('#out').textContent));
 const proof = results.find((r) => /^Screenshot matches/.test(r.text));

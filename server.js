@@ -146,7 +146,7 @@ const SCHEMA = {
     if (m.op !== 'add' || [sx, sy, sw, sh, tx, ty].includes(undefined) || sw < 0.02 || sh < 0.02 || !fits(sx, sw) || !fits(sy, sh) || !fits(tx, sw) || !fits(ty, sh)) return;
     return { s, op: 'add', patchId, sx, sy, sw, sh, tx, ty };
   },
-  'witness-frame': (m) => (frameShape(m) && SIG_RE.test(m.sig) ? { seq: m.seq, t: m.t, dhash: m.dhash, prev: m.prev, chain: m.chain, sig: m.sig } : undefined),
+  'witness-frame': (m) => (frameShape(m) && SIG_RE.test(m.sig) ? { seq: m.seq, t: m.t, digest: m.digest, prev: m.prev, chain: m.chain, sig: m.sig } : undefined),
   'proposal-sign': (m) => (typeof m.proposalId === 'string' && PROPOSAL_RE.test(m.proposalId) && typeof m.sig === 'string' && SIG_RE.test(m.sig) ? { proposalId: m.proposalId, sig: m.sig } : undefined),
 };
 
@@ -253,7 +253,7 @@ async function witnessOp(room, peer, f) {
   if (Math.abs(f.t - Date.now()) > WITNESS_SKEW_MS) return 400; // stale or from the future: a replay
   const last = peer.witness;
   if (f.seq === 1 ? last || f.prev !== GENESIS : !(last && f.seq === last.seq + 1 && f.prev === last.chain)) return 409; // #1 only opens a share
-  if (f.chain !== (await link(f.prev, f.seq, f.dhash, f.t)) || !(await verify(peer.jwk, witnessPayload({ room: room.id, ...f }), f.sig))) return 400;
+  if (f.chain !== (await link(f.prev, f.seq, f.digest, f.t)) || !(await verify(peer.jwk, witnessPayload({ room: room.id, ...f }), f.sig))) return 400;
   peer.witness = { seq: f.seq, chain: f.chain };
   peer.witnessAt = Date.now();
   broadcast(room, { type: 'witness-frame', from: peer.id, name: peer.name, ...f }, peer);
