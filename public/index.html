@@ -1,0 +1,379 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>TrueMeet — premium video meetings</title>
+  <meta name="description" content="Studio-quality, peer-to-peer encrypted video meetings with live captions, recording and host controls. No sign-up, no downloads, no time limits.">
+  <meta name="theme-color" content="#05060b">
+  <link rel="icon" href="/icon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Space+Grotesk:wght@500;600;700&family=Instrument+Serif:ital@1&display=swap">
+  <link rel="stylesheet" href="/app.css">
+  <script type="module" src="/app.js"></script>
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2M12 19v3"/></symbol>
+  <symbol id="i-mic-off" viewBox="0 0 24 24"><path d="m2 2 20 20M18.89 13.23A7.12 7.12 0 0 0 19 12v-2M5 10v2a7 7 0 0 0 12 5M15 9.34V5a3 3 0 0 0-5.68-1.33M9 9v3a3 3 0 0 0 5.12 2.12M12 19v3"/></symbol>
+  <symbol id="i-video" viewBox="0 0 24 24"><path d="m16 13 5.22 3.48a.5.5 0 0 0 .78-.42V7.87a.5.5 0 0 0-.75-.43L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/></symbol>
+  <symbol id="i-video-off" viewBox="0 0 24 24"><path d="M10.66 6H14a2 2 0 0 1 2 2v2.5l5.25-3.06a.5.5 0 0 1 .75.43v8.2M16 16a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h2M2 2l20 20"/></symbol>
+  <symbol id="i-video-plus" viewBox="0 0 24 24"><path d="m16 13 5.22 3.48a.5.5 0 0 0 .78-.42V7.87a.5.5 0 0 0-.75-.43L16 10.5"/><rect x="2" y="6" width="14" height="12" rx="2"/><path d="M9 9v6M6 12h6"/></symbol>
+  <symbol id="i-screen" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="m9 10 3-3 3 3M12 13V7M12 17v4M8 21h8"/></symbol>
+  <symbol id="i-hand" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></symbol>
+  <symbol id="i-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2M9 9h.01M15 9h.01"/></symbol>
+  <symbol id="i-message" viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></symbol>
+  <symbol id="i-user-plus" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M19 8v6M22 11h-6"/></symbol>
+  <symbol id="i-user-minus" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 11h-6"/></symbol>
+  <symbol id="i-captions" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h4M15 15h2M7 11h2M13 11h4"/></symbol>
+  <symbol id="i-record" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3.5" fill="currentColor"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><path d="M12 12h.01M19 12h.01M5 12h.01" stroke-width="3"/></symbol>
+  <symbol id="i-phone-off" viewBox="0 0 24 24"><path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-3.33-2.67m-2.67-3.34a19.79 19.79 0 0 1-3.07-8.63A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91M22 2 2 22"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="14" height="14" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
+  <symbol id="i-unlock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 9.9-1"/></symbol>
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></symbol>
+  <symbol id="i-speaker" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18M15 9h6M15 15h6"/></symbol>
+  <symbol id="i-pip" viewBox="0 0 24 24"><path d="M21 9V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10c0 1.1.9 2 2 2h4"/><rect x="12" y="13" width="10" height="7" rx="2"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="m22 2-7 20-4-9-9-4ZM22 2 11 13"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 17v5M5 17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V6h1a2 2 0 0 0 0-4H8a2 2 0 0 0 0 4h1v4.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24Z"/></symbol>
+  <symbol id="i-sparkles" viewBox="0 0 24 24"><path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3Z"/></symbol>
+  <symbol id="i-waves" viewBox="0 0 24 24"><path d="M2 12h2M6 8v8M10 5v14M14 9v6M18 7v10M22 12h-2"/></symbol>
+  <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.01M10 8h.01M14 8h.01M18 8h.01M8 12h.01M12 12h.01M16 12h.01M7 16h10"/></symbol>
+  <symbol id="i-infinity" viewBox="0 0 24 24"><path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z"/></symbol>
+  <symbol id="i-crown" viewBox="0 0 24 24"><path d="m2 6 4 11h12l4-11-6 5-4-7-4 7-6-5ZM6 21h12"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6"/></symbol>
+  <symbol id="i-board" viewBox="0 0 24 24"><path d="M2 3h20M21 3v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V3M12 16v5M8 21h8"/><path d="m7 11 3-3 2 2 4-4"/></symbol>
+  <symbol id="i-bookmark" viewBox="0 0 24 24"><path d="m19 21-7-4-7 4V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16z"/></symbol>
+  <symbol id="i-languages" viewBox="0 0 24 24"><path d="m5 8 6 6M4 14l6-6 2-3M2 5h12M7 2h1M22 22l-5-10-5 10M14 18h6"/></symbol>
+  <symbol id="i-pencil" viewBox="0 0 24 24"><path d="M21.17 6.81a1 1 0 0 0-3.99-3.99L3.84 16.17a2 2 0 0 0-.5.83l-1.32 4.35a.5.5 0 0 0 .62.62l4.35-1.32a2 2 0 0 0 .83-.5zM15 5l4 4"/></symbol>
+  <symbol id="i-eraser" viewBox="0 0 24 24"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21M22 21H7M5 11l9 9"/></symbol>
+  <symbol id="i-pointer" viewBox="0 0 24 24"><path d="M4.04 4.69a.5.5 0 0 1 .65-.65l16 6.5a.5.5 0 0 1-.06.95l-6.13 1.58a2 2 0 0 0-1.43 1.43l-1.58 6.13a.5.5 0 0 1-.95.06z"/></symbol>
+  <symbol id="i-crosshair" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="2.5" fill="currentColor"/><path d="M22 12h-4M6 12H2M12 6V2M12 22v-4"/></symbol>
+  <symbol id="i-undo" viewBox="0 0 24 24"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></symbol>
+  <symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="m21.64 3.64-1.28-1.28a1.21 1.21 0 0 0-1.72 0L2.36 18.64a1.21 1.21 0 0 0 0 1.72l1.28 1.28a1.2 1.2 0 0 0 1.72 0L21.64 5.36a1.2 1.2 0 0 0 0-1.72M14 7l3 3M5 6v4M19 14v4M10 2v2M7 8H3M21 16h-4M11 3H9"/></symbol>
+  <symbol id="i-pin-drop" viewBox="0 0 24 24"><path d="M20 10c0 4.99-5.54 10.19-7.4 11.8a1 1 0 0 1-1.2 0C9.54 20.19 4 14.99 4 10a8 8 0 0 1 16 0"/><circle cx="12" cy="10" r="3"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5M12 7v5l4 2"/></symbol>
+  <symbol id="i-scissors" viewBox="0 0 24 24"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M8.12 8.12 12 12M20 4 8.12 15.88M14.8 14.8 20 20"/></symbol>
+  <symbol id="i-ear" viewBox="0 0 24 24"><path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/><path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/></symbol>
+  <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M5 22h14M19.27 13.73A2.5 2.5 0 0 0 17.5 13h-11A2.5 2.5 0 0 0 4 15.5V17a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1.5c0-.66-.26-1.3-.73-1.77M14 13V8.5C14 7 15 7 15 5a3 3 0 0 0-3-3c-1.66 0-3 1-3 3s1 2 1 3.5V13"/></symbol>
+  <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16M8 17V9M13 17V5M18 17v-3"/></symbol>
+</svg>
+<div class="aurora" aria-hidden="true"></div>
+
+<!-- Home -->
+<main id="home" class="view" hidden>
+  <a class="skip" href="#start">Skip to start a meeting</a>
+  <header class="nav">
+    <a class="brand" href="/"><img class="mark" src="/icon.svg" alt="">TrueMeet</a>
+    <nav class="nav-links" aria-label="Primary">
+      <a href="#features">Features</a>
+      <span class="chip ok"><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Peer-to-peer encrypted</span>
+    </nav>
+  </header>
+
+  <section class="hero">
+    <div class="hero-copy">
+      <span class="eyebrow"><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg>No sign-up · No downloads · No time limits</span>
+      <h1>Meetings that feel <em>effortless.</em></h1>
+      <p class="lede">Studio-quality video calls with live captions, one-click recording and real host controls — streamed directly between participants, encrypted end to end.</p>
+      <div class="cta" id="start">
+        <button class="btn primary lg new-meeting"><svg class="i" aria-hidden="true"><use href="#i-video-plus"/></svg>New meeting</button>
+        <form id="joinForm" class="join">
+          <svg class="i" aria-hidden="true"><use href="#i-keyboard"/></svg>
+          <input id="joinCode" placeholder="Enter a code or link" aria-label="Meeting code or link" autocomplete="off" spellcheck="false">
+          <button class="btn ghost sm">Join</button>
+        </form>
+      </div>
+      <ul class="trust">
+        <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Up to 8 people in HD</li>
+        <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Live captions &amp; on-device translation</li>
+        <li><svg class="i" aria-hidden="true"><use href="#i-check"/></svg>Self-hosted, zero dependencies</li>
+      </ul>
+    </div>
+
+    <div class="hero-art" aria-hidden="true">
+      <div class="window glass">
+        <div class="window-bar"><i></i><i></i><i></i><span class="chip rec"><span class="live"></span>REC 24:18</span></div>
+        <div class="mock-grid">
+          <div class="mock" style="--h:262"><b>MA</b><small>Maya</small></div>
+          <div class="mock" style="--h:192"><b>LK</b><small>Leo</small></div>
+          <div class="mock" style="--h:330"><b>AI</b><small>Aiko</small></div>
+          <div class="mock" style="--h:150"><b>SR</b><small>Sam</small></div>
+        </div>
+        <div class="mock-dock"><i></i><i></i><i></i><i></i><i class="red"></i></div>
+        <div class="float cap glass">
+          <span><b>Maya</b>Let’s lock the launch for Friday.</span>
+          <span><b>Leo</b>Design review is done — shipping it.</span>
+          <span><b>Aiko</b>I’ll send the recap after the call.</span>
+          <span><b>Sam</b>Love it. Let’s go.</span>
+        </div>
+        <div class="float note glass">🎉 👏 ❤️</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="stats glass" aria-label="TrueMeet at a glance">
+    <div><b>∞</b><span>minutes per meeting</span></div>
+    <div><b>0</b><span>accounts or installs</span></div>
+    <div><b>8</b><span>people in HD</span></div>
+    <div><b>0&nbsp;bytes</b><span>of your media on our server</span></div>
+  </section>
+
+  <section id="features" class="features">
+    <div class="section-head">
+      <span class="eyebrow">Built for people who meet a lot</span>
+      <h2>Everything premium. Nothing to install.</h2>
+      <p>The features you pay for elsewhere, running entirely in your browser.</p>
+    </div>
+    <div class="bento">
+      <article class="card xl">
+        <span class="ico"><svg class="i" aria-hidden="true"><use href="#i-languages"/></svg></span>
+        <h3>Live captions, translated on your device</h3>
+        <p>Everyone’s speech becomes captions for the whole room. Pick a language and each caption is translated right in your browser — your words never go to a translation server.</p>
+        <ol class="demo" aria-hidden="true">
+          <li><b>Maya · 10:02</b>Can everyone see the roadmap?</li>
+          <li><b>Leo · 10:02 · translated</b>Sí — el tercer trimestre me parece bien.</li>
+          <li><b>Aiko · 10:03 · translated</b>Let’s move the launch to Friday.</li>
+          <li class="typing"><b>Sam · now</b><i></i><i></i><i></i></li>
+        </ol>
+      </article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-crosshair"/></svg></span><h3>Point, draw &amp; pin</h3><p>Laser, pen and numbered pins with notes right on a shared screen. The presenter sees them in a floating window over any app.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg></span><h3>Verifiable encryption</h3><p>Peer-to-peer media plus a 6-digit safety code you can read aloud to prove nobody is intercepting the call.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-board"/></svg></span><h3>Shared whiteboard</h3><p>Sketch together in real time, undo your strokes, and save the board as an image.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-bookmark"/></svg></span><h3>Highlights that line up</h3><p>Mark a moment with one key. Highlights land in your notes with meeting and recording timestamps.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg></span><h3>Waiting room &amp; host controls</h3><p>Admit people one by one, lock the room, mute everyone, or remove a participant.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg></span><h3>Talk-time balance</h3><p>A private view for the host of who has spoken how much — measured locally, never sent anywhere.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-record"/></svg></span><h3>One-click recording</h3><p>Everyone’s audio mixed and saved to your device, with a REC badge so nobody is recorded unknowingly.</p></article>
+      <article class="card wide"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-wand"/></svg></span><h3>Auto-Mode meeting director</h3><p>The stage follows whoever is talking, drawing or pointing. Decisions, deadlines and action items are captured as highlights automatically — and an open mic gets muted if you step away.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-history"/></svg></span><h3>Time-travel catch-up</h3><p>Join late and get a card with what you missed: key moments, recent conversation and the live whiteboard.</p></article>
+      <article class="card"><span class="ico"><svg class="i" aria-hidden="true"><use href="#i-infinity"/></svg></span><h3>No limits, no accounts</h3><p>Share a link, pick a name, you’re in. No cutoffs, no installs, no upsells.</p></article>
+    </div>
+  </section>
+
+  <section class="cta-band glass">
+    <h2>Your next meeting deserves better.</h2>
+    <p>One click. No sign-up. Share the link and you’re live.</p>
+    <button class="btn primary lg new-meeting"><svg class="i" aria-hidden="true"><use href="#i-video-plus"/></svg>Start a meeting<svg class="i" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+  </section>
+  <footer class="foot">TrueMeet · self-hosted video meetings · your media never touches the server</footer>
+</main>
+
+<!-- Lobby -->
+<main id="lobby" class="view" hidden>
+  <header class="nav"><a class="brand" href="/"><img class="mark" src="/icon.svg" alt="">TrueMeet</a></header>
+  <section class="lobby">
+    <div class="preview" id="previewWrap">
+      <video id="preview" autoplay playsinline muted></video>
+      <div class="avatar"><span class="self-initials">?</span></div>
+      <div class="preview-top"><span class="chip"><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Only you can see this preview</span></div>
+      <div class="preview-bar glass">
+        <button type="button" class="ctl mic-ctl" data-tip="Microphone" aria-label="Microphone"><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg></button>
+        <button type="button" class="ctl cam-ctl" data-tip="Camera" aria-label="Camera"><svg class="i" aria-hidden="true"><use href="#i-video"/></svg></button>
+        <div class="meter" role="meter" aria-label="Microphone level" aria-valuemin="0" aria-valuemax="1"><i id="meter"></i></div>
+      </div>
+    </div>
+    <form class="join-card glass" id="lobbyForm">
+      <span class="eyebrow">Ready to join?</span>
+      <h1 id="lobbyRoom" class="room-code"></h1>
+      <ul class="checks" aria-live="polite">
+        <li id="chkCam"><svg class="i" aria-hidden="true"><use href="#i-video"/></svg><span>Camera</span></li>
+        <li id="chkMic"><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg><span>Microphone</span></li>
+        <li class="ok"><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span>Encrypted</span></li>
+      </ul>
+      <label class="field">Your name<input id="name" required maxlength="40" placeholder="e.g. Ada Lovelace" autocomplete="name"></label>
+      <div class="row">
+        <label class="field">Camera<select id="camSel"></select></label>
+        <label class="field">Microphone<select id="micSel"></select></label>
+      </div>
+      <label class="field">Speaker<select id="spkSel"></select></label>
+      <button id="joinBtn" class="btn primary lg block"><span class="spinner" aria-hidden="true"></span><span class="btn-text">Join meeting</span></button>
+      <button type="button" class="btn ghost block copy-link"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>Copy invite link</button>
+      <p class="err" id="lobbyErr" role="alert"></p>
+    </form>
+  </section>
+</main>
+
+<!-- Room -->
+<main id="room" class="view" hidden>
+  <h1 class="sr-only" id="roomTitle">Meeting</h1>
+  <header class="topbar">
+    <div class="meta">
+      <img class="mark sm" src="/icon.svg" alt="">
+      <strong id="roomName"></strong>
+      <span class="chip ok" title="Audio and video are encrypted between participants (DTLS-SRTP) and never pass through the server"><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg>Encrypted</span>
+      <span class="chip auto" id="autoChip" hidden><svg class="i" aria-hidden="true"><use href="#i-wand"/></svg>Auto-Mode</span>
+      <span class="chip" id="waitChip" hidden><svg class="i" aria-hidden="true"><use href="#i-clock"/></svg>Waiting room</span>
+      <span class="chip" id="lockChip" hidden><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg>Locked</span>
+      <span class="chip rec" id="recChip" hidden><span class="live"></span>REC</span>
+      <span class="chip mono" id="timer" aria-label="Meeting duration">00:00</span>
+    </div>
+    <div class="meta">
+      <button id="viewBtn" class="chip" title="Switch layout"><svg class="i" aria-hidden="true"><use href="#i-grid"/></svg><span>Gallery</span></button>
+      <button class="chip copy-link hide-sm"><svg class="i" aria-hidden="true"><use href="#i-user-plus"/></svg>Invite</button>
+    </div>
+  </header>
+
+  <div class="body">
+    <section class="stage-wrap" aria-label="Participants">
+      <div id="stage" class="stage"></div>
+      <div id="strip" class="strip"></div>
+      <div id="alone" class="alone glass"><span>You’re the only one here.</span><button class="btn primary sm copy-link"><svg class="i" aria-hidden="true"><use href="#i-copy"/></svg>Copy invite link</button></div>
+      <div id="captions" class="captions" aria-live="polite"></div>
+      <div id="floaters" class="floaters" aria-hidden="true"></div>
+      <div id="board" class="board" hidden>
+        <canvas id="boardCanvas" aria-label="Shared whiteboard"></canvas>
+        <div class="pins" id="boardPins"></div>
+        <div class="board-tools glass" role="toolbar" aria-label="Whiteboard tools">
+          <button data-board-tool="pen" aria-label="Pen" title="Pen"><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg></button>
+          <button data-board-tool="laser" aria-label="Laser pointer" title="Laser pointer"><svg class="i" aria-hidden="true"><use href="#i-crosshair"/></svg></button>
+          <button data-board-tool="pin" aria-label="Drop a numbered pin" title="Pin with a note"><svg class="i" aria-hidden="true"><use href="#i-pin-drop"/></svg></button>
+          <span class="vsep" aria-hidden="true"></span>
+          <button data-color="#f2f4fa" class="swatch" style="--c:#f2f4fa" aria-label="White ink"></button>
+          <button data-color="#a78bfa" class="swatch" style="--c:#a78bfa" aria-label="Violet ink"></button>
+          <button data-color="#38bdf8" class="swatch" style="--c:#38bdf8" aria-label="Blue ink"></button>
+          <button data-color="#34d399" class="swatch" style="--c:#34d399" aria-label="Green ink"></button>
+          <button data-color="#fbbf24" class="swatch" style="--c:#fbbf24" aria-label="Amber ink"></button>
+          <button data-color="#f43f5e" class="swatch" style="--c:#f43f5e" aria-label="Red ink"></button>
+          <span class="vsep" aria-hidden="true"></span>
+          <button id="boardUndo" aria-label="Undo my last stroke" title="Undo"><svg class="i" aria-hidden="true"><use href="#i-undo"/></svg></button>
+          <button id="boardClear" aria-label="Clear the whiteboard for everyone" title="Clear for everyone"><svg class="i" aria-hidden="true"><use href="#i-eraser"/></svg></button>
+          <button id="boardExport" aria-label="Save as image" title="Save as PNG"><svg class="i" aria-hidden="true"><use href="#i-image"/></svg></button>
+          <button id="boardClose" aria-label="Close whiteboard" title="Close (W)"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+        </div>
+      </div>
+    </section>
+
+    <aside id="panel" class="panel glass" hidden>
+      <div class="tabs" role="tablist">
+        <button data-tab="chat" role="tab">Chat</button>
+        <button data-tab="people" role="tab">People <span id="peopleCount"></span></button>
+        <button data-tab="notes" role="tab">Transcript</button>
+        <button class="icon-btn" id="closePanel" aria-label="Close panel"><svg class="i" aria-hidden="true"><use href="#i-x"/></svg></button>
+      </div>
+      <div class="tab" id="tab-chat">
+        <ol id="chatList" class="feed" data-empty="Messages are visible to everyone in the meeting."></ol>
+        <form id="chatForm" class="composer">
+          <input id="chatInput" placeholder="Message everyone" maxlength="2000" autocomplete="off" aria-label="Message">
+          <button class="icon-btn" aria-label="Send"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg></button>
+        </form>
+      </div>
+      <div class="tab" id="tab-people" hidden>
+        <div class="host-tools" id="hostTools" hidden>
+          <button id="muteAll" class="btn ghost sm"><svg class="i" aria-hidden="true"><use href="#i-mic-off"/></svg>Mute all</button>
+          <button id="lockBtn" class="btn ghost sm"><svg class="i" aria-hidden="true"><use href="#i-lock"/></svg><span>Lock</span></button>
+          <label class="switch compact"><span>Waiting room</span><input type="checkbox" id="waitToggle"></label>
+        </div>
+        <ul id="peopleList" class="people"></ul>
+        <section id="talkTime" class="talk" hidden>
+          <h2 class="sub"><svg class="i" aria-hidden="true"><use href="#i-chart"/></svg>Talk time <small>only you see this</small></h2>
+          <ul></ul>
+        </section>
+      </div>
+      <div class="tab" id="tab-notes" hidden>
+        <ol id="transcript" class="feed" data-empty="Turn on live captions (L) and everything said appears here."></ol>
+        <div class="tab-foot two">
+          <button class="btn ghost mark-btn"><svg class="i" aria-hidden="true"><use href="#i-bookmark"/></svg>Highlight</button>
+          <button class="btn ghost dl-notes"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download notes</button>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <nav class="dock glass" aria-label="Meeting controls">
+    <button class="ctl mic-ctl" data-tip="Microphone · M" aria-label="Microphone"><svg class="i" aria-hidden="true"><use href="#i-mic"/></svg></button>
+    <button class="ctl cam-ctl" data-tip="Camera · V" aria-label="Camera"><svg class="i" aria-hidden="true"><use href="#i-video"/></svg></button>
+    <button class="ctl" id="shareBtn" data-tip="Share screen · S" aria-label="Share screen"><svg class="i" aria-hidden="true"><use href="#i-screen"/></svg></button>
+    <button class="ctl" id="boardBtn" data-tip="Whiteboard · W" aria-label="Whiteboard"><svg class="i" aria-hidden="true"><use href="#i-board"/></svg><b class="dot" hidden></b></button>
+    <button class="ctl" id="autoBtn" data-tip="Auto-Mode · A" aria-label="Auto-Mode"><svg class="i" aria-hidden="true"><use href="#i-wand"/></svg></button>
+    <div class="pop-wrap">
+      <button class="ctl" data-pop="#reactPop" data-tip="Reactions" aria-label="Reactions" aria-haspopup="true"><svg class="i" aria-hidden="true"><use href="#i-smile"/></svg></button>
+      <div id="reactPop" class="pop glass reactions" hidden></div>
+    </div>
+    <button class="ctl" id="handBtn" data-tip="Raise hand · H" aria-label="Raise hand"><svg class="i" aria-hidden="true"><use href="#i-hand"/></svg></button>
+    <button class="ctl" id="ccBtn" data-tip="Live captions · L" aria-label="Live captions"><svg class="i" aria-hidden="true"><use href="#i-captions"/></svg></button>
+    <button class="ctl" id="recBtn" data-tip="Record" aria-label="Record"><svg class="i" aria-hidden="true"><use href="#i-record"/></svg></button>
+    <span class="sep" aria-hidden="true"></span>
+    <button class="ctl" id="chatBtn" data-tip="Chat · C" aria-label="Chat"><svg class="i" aria-hidden="true"><use href="#i-message"/></svg><b class="badge" id="unread" hidden></b></button>
+    <button class="ctl" id="peopleBtn" data-tip="People · P" aria-label="People"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg></button>
+    <div class="pop-wrap">
+      <button class="ctl" data-pop="#morePop" data-tip="More" aria-label="More options" aria-haspopup="true"><svg class="i" aria-hidden="true"><use href="#i-more"/></svg></button>
+      <div id="morePop" class="pop glass menu" hidden>
+        <label class="switch"><svg class="i" aria-hidden="true"><use href="#i-waves"/></svg><span>Noise suppression</span><input type="checkbox" id="nsToggle" checked></label>
+        <label class="switch" id="blurRow" hidden><svg class="i" aria-hidden="true"><use href="#i-sparkles"/></svg><span>Background blur</span><input type="checkbox" id="blurToggle"></label>
+        <label class="switch select-row"><svg class="i" aria-hidden="true"><use href="#i-languages"/></svg><span>Translate captions<em class="cap" id="tlCap"></em></span><select id="tlSel" aria-label="Translate captions to"></select></label>
+        <button class="mark-btn"><svg class="i" aria-hidden="true"><use href="#i-bookmark"/></svg>Mark highlight<kbd>B</kbd></button>
+        <button id="pipBtn"><svg class="i" aria-hidden="true"><use href="#i-pip"/></svg><span>Pop-out presenter view<em class="cap" id="popCap"></em></span></button>
+        <button class="dl-notes"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download notes</button>
+        <p class="kbd"><kbd>M</kbd> mic <kbd>V</kbd> camera <kbd>S</kbd> share <kbd>W</kbd> board <kbd>A</kbd> auto <kbd>H</kbd> hand <kbd>L</kbd> captions <kbd>B</kbd> highlight <kbd>C</kbd> chat <kbd>P</kbd> people</p>
+      </div>
+    </div>
+    <button class="ctl leave" id="leaveBtn" aria-label="Leave meeting"><svg class="i" aria-hidden="true"><use href="#i-phone-off"/></svg><span>Leave</span></button>
+  </nav>
+</main>
+
+<!-- End -->
+<main id="end" class="view end" hidden>
+  <div class="end-card glass">
+    <img class="mark lg" src="/icon.svg" alt="">
+    <h1 id="endTitle">You left the meeting</h1>
+    <p class="muted mono" id="endMeta"></p>
+    <div class="actions">
+      <button id="rejoin" class="btn primary lg block">Rejoin</button>
+      <button id="endNotes" class="btn ghost block dl-notes"><svg class="i" aria-hidden="true"><use href="#i-download"/></svg>Download transcript &amp; chat</button>
+      <button id="homeBtn" class="btn ghost block">Back to home</button>
+    </div>
+  </div>
+</main>
+
+<div id="toasts" class="toasts" aria-live="polite"><div id="notices" class="notices"></div><div id="knocks" class="knocks"></div></div>
+
+<template id="tileTpl">
+  <div class="tile">
+    <video autoplay playsinline></video>
+    <img class="tm-frame" alt="An earlier moment of the shared screen">
+    <div class="avatar"><span></span></div>
+    <span class="hand-badge" aria-label="Hand raised"><svg class="i" aria-hidden="true"><use href="#i-hand"/></svg></span>
+    <span class="react" aria-hidden="true"></span>
+    <canvas class="ink" aria-hidden="true"></canvas>
+    <canvas class="ink-past" aria-hidden="true"></canvas>
+    <div class="pins"></div>
+    <div class="pins pins-past"></div>
+    <div class="ink-tools glass" role="toolbar" aria-label="Annotation tools">
+      <button data-ink="" aria-label="Stop annotating" title="Pointer (Esc)"><svg class="i" aria-hidden="true"><use href="#i-pointer"/></svg></button>
+      <button data-ink="laser" aria-label="Laser pointer" title="Laser pointer"><svg class="i" aria-hidden="true"><use href="#i-crosshair"/></svg></button>
+      <button data-ink="pen" aria-label="Draw" title="Draw"><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg></button>
+      <button data-ink="pin" aria-label="Drop a numbered pin" title="Pin with a note"><svg class="i" aria-hidden="true"><use href="#i-pin-drop"/></svg></button>
+      <button data-ink="snip" aria-label="Snip a region onto the whiteboard" title="Snip a region onto the whiteboard"><svg class="i" aria-hidden="true"><use href="#i-scissors"/></svg></button>
+      <button class="ink-clear" aria-label="Clear annotations" title="Clear"><svg class="i" aria-hidden="true"><use href="#i-eraser"/></svg></button>
+      <button class="local-only ink-allow" aria-label="Let viewers annotate" title="Let viewers annotate"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg></button>
+      <button class="local-only ink-pop" aria-label="Pop-out presenter view" title="Presenter view: see annotations over any app"><svg class="i" aria-hidden="true"><use href="#i-pip"/></svg></button>
+    </div>
+    <div class="tm glass">
+      <svg class="i" aria-hidden="true"><use href="#i-history"/></svg>
+      <input type="range" class="tm-range" min="0" max="0" step="1" value="0" aria-label="Rewind the shared screen (last 2 minutes)">
+      <span class="tm-badge" aria-live="polite">Recording…</span>
+      <button class="btn primary xs tm-beam"><svg class="i" aria-hidden="true"><use href="#i-send"/></svg>Beam to presenter</button>
+      <button class="btn ghost xs tm-live">Jump to live</button>
+    </div>
+    <span class="q" title="Connecting…"><i></i><i></i><i></i></span>
+    <button class="whisper-btn" aria-label="Hold to whisper" title="Hold to whisper — or hold Alt over this tile"><svg class="i" aria-hidden="true"><use href="#i-ear"/></svg></button>
+    <button class="pin" title="Pin (or double-click)" aria-label="Pin participant"><svg class="i" aria-hidden="true"><use href="#i-pin"/></svg></button>
+    <div class="label">
+      <span class="eq" aria-hidden="true"><i></i><i></i><i></i></span>
+      <svg class="i mic-off" aria-label="Muted"><use href="#i-mic-off"/></svg>
+      <svg class="i shield-ok" aria-label="Verified connection"><use href="#i-shield"/></svg>
+      <span class="name"></span>
+    </div>
+  </div>
+</template>
+</body>
+</html>
