@@ -179,6 +179,7 @@ async function handle(m) {
       addMark({ name: m.auto ? 'Auto-Mode' : p.name, context: String(m.context ?? '').slice(0, 200), auto: !!m.auto, reason: m.reason });
       return toast(m.auto ? `Auto-highlight · ${m.reason}` : `${p.name} marked a highlight`, m.auto ? 'wand' : 'bookmark');
     case 'catchup': return renderCatchup(m);
+    case 'speak-reply': return p && speakReply(p, String(m.text).slice(0, 280), m.lang);
     case 'host':
       host = m.id;
       if (host !== me.id) { knocks.clear(); renderKnocks(); }
@@ -412,7 +413,7 @@ function syncState() {
 function toggleMic() {
   if (!micTrack) return toast('No microphone available', 'mic-off');
   me.mic = !me.mic;
-  micTrack.enabled = me.mic;
+  micTrack.enabled = me.mic && !voiceDuck;
   syncState();
 }
 async function toggleCam() {
@@ -450,7 +451,7 @@ function toggleCaptions() {
   r.interimResults = true;
   r.lang = me.lang;
   r.onresult = (e) => {
-    if (!me.mic) return; // never transcribe while muted
+    if (!me.mic || voiceDuck) return; // never transcribe while muted, or a reply our speakers are voicing
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const res = e.results[i], text = res[0].transcript.trim();
       if (!text || (!res.isFinal && Date.now() - lastInterim < 250)) continue;
@@ -566,7 +567,7 @@ async function copilotFor(p, text, lang) {
   copilotAt = Date.now();
   const sayLang = a.lang; // templates exist for 7 languages; others fall back to English (translated below)
   const view = {
-    source: 'from this meeting’s context', mine, speakerLang,
+    source: 'from this meeting’s context', mine, speakerLang, speakerTag: LANG_RE.test(lang) ? lang : speakerLang,
     intent: renderIntent(a, mine, (await translateTo(text, speakerLang, mine)) ?? text),
     basis: renderBasis(a, mine),
     answers: await Promise.all(a.answers.map(async (ans) => {
@@ -618,7 +619,7 @@ function copilotCard(view) {
   const dismiss = () => { if (copilotView === view) copilotView = null; el.remove(); };
   view.answers.forEach((ans) => {
     const li = document.createElement('li');
-    li.innerHTML = `<p class="cp-native"><span class="cp-tag"></span><span class="cp-text"></span></p><p class="cp-spoken"><span class="cp-tag"></span><span class="cp-say"></span></p><p class="cp-pron"></p><div class="cp-actions"><button class="btn ghost xs cp-read">${icon('waves')}Read aloud</button><button class="btn primary xs cp-send">${icon('send')}Send</button></div>`;
+    li.innerHTML = `<p class="cp-native"><span class="cp-tag"></span><span class="cp-text"></span></p><p class="cp-spoken"><span class="cp-tag"></span><span class="cp-say"></span></p><p class="cp-pron"></p><div class="cp-actions"><button class="btn ghost xs cp-read">${icon('waves')}Read aloud</button><button class="btn ghost xs cp-speak">${icon('volume')}<span>Speak to room</span></button><button class="btn primary xs cp-send">${icon('send')}Send</button></div>`;
     const [nativeTag, spokenTag] = li.querySelectorAll('.cp-tag');
     nativeTag.textContent = view.mine.toUpperCase();
     nativeTag.hidden = !bilingual;
@@ -630,7 +631,15 @@ function copilotCard(view) {
     const pron = hasDevanagari(say) && view.mine !== 'hi' ? transliterate(say) : '';
     li.querySelector('.cp-pron').textContent = pron ? `Say it: ${pron}` : '';
     li.querySelector('.cp-pron').hidden = !pron;
-    li.querySelector('.cp-read').onclick = () => readAloud(say, view.speakerLang);
+    li.querySelector('.cp-read').onclick = () => readAloud(say, view.speakerTag);
+    li.querySelector('.cp-speak').onclick = (e) => {
+      send({ type: 'speak-reply', text: ans.spoken, lang: view.speakerTag });
+      speakReply(L, ans.spoken, view.speakerTag, true);
+      toast(`TrueMeet is speaking your reply to the room (${voiceLabel(view.speakerTag)})`, 'volume');
+      e.currentTarget.disabled = true;
+      e.currentTarget.querySelector('span').textContent = 'Spoken';
+      for (const b of el.querySelectorAll('.cp-speak:not(:disabled)')) { b.disabled = true; setTimeout(() => (b.disabled = false), 2600); } // server allows one every 2.5 s
+    };
     li.querySelector('.cp-send').onclick = () => {
       send({ type: 'chat', text: ans.spoken });
       addChat(me.name, ans.spoken, true);
@@ -644,14 +653,94 @@ function copilotCard(view) {
   setTimeout(expire, 60_000);
   $('#copilot').replaceChildren(el);
 }
-function readAloud(text, l) {
-  if (!('speechSynthesis' in window)) return toast('Read-aloud isn’t available in this browser', 'waves');
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text);
-  u.lang = l;
-  const voice = speechSynthesis.getVoices().find((v) => v.lang.toLowerCase().startsWith(l));
-  if (voice) u.voice = voice;
-  speechSynthesis.speak(u);
+function readAloud(text, l) { // a private preview, so you can say it yourself
+  duck(true);
+  speakAloud(text, l, { onEnd: () => duck(false) }).then((r) => {
+    if (r === 'spoke') return;
+    duck(false);
+    toast(`No ${voiceLabel(l)} voice on this device — read it from the card`, 'waves');
+  });
+}
+
+// ---------- Speak to room ----------
+// A chosen reply is spoken aloud by every other participant's browser and shown on the sender's tile.
+// Speech synthesis bypasses echo cancellation, so (1) the sender's own browser stays silent — their
+// mic would carry it twice — and (2) each listener briefly ducks their own mic, and ignores their
+// own captions, while it plays; otherwise every listener would re-broadcast the reply.
+let voiceDuck = 0;
+const voiceLabel = (l) => String(l).split('-')[0].toUpperCase();
+function duck(on) {
+  voiceDuck = Math.max(0, voiceDuck + (on ? 1 : -1));
+  if (micTrack) micTrack.enabled = me.mic && !voiceDuck;
+}
+async function voicesFor(l) {
+  if (!('speechSynthesis' in window)) return [];
+  if (!speechSynthesis.getVoices().length) { // voices load asynchronously on first use
+    await new Promise((resolve) => { speechSynthesis.addEventListener?.('voiceschanged', resolve, { once: true }); setTimeout(resolve, 800); });
+  }
+  const want = String(l).toLowerCase(), base = want.split('-')[0], tag = (v) => v.lang.toLowerCase().replace('_', '-');
+  const all = speechSynthesis.getVoices();
+  return [...all.filter((v) => tag(v) === want), ...all.filter((v) => tag(v) !== want && tag(v).split('-')[0] === base)];
+}
+// Speak text; resolves 'spoke' once audio starts, or 'no-voice' / 'failed'. onEnd fires when it stops.
+async function speakAloud(text, l, { onEnd } = {}) {
+  const [voice] = await voicesFor(l);
+  if (!voice) return 'no-voice';
+  return new Promise((resolve) => {
+    const u = new SpeechSynthesisUtterance(text);
+    Object.assign(u, { lang: voice.lang, voice, rate: 0.95 });
+    const timer = setTimeout(() => resolve('failed'), 3000);
+    u.onstart = () => { clearTimeout(timer); resolve('spoke'); };
+    u.onend = () => onEnd?.();
+    u.onerror = () => { clearTimeout(timer); onEnd?.(); resolve('failed'); };
+    speechSynthesis.speak(u);
+  });
+}
+function earcon() { // no voice installed: a soft rising two-note cue, then the words on screen
+  if (ac?.state !== 'running') return;
+  const t = ac.currentTime, g = ac.createGain();
+  g.connect(ac.destination);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(0.06, t + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.7);
+  [523.25, 783.99].forEach((f, i) => {
+    const o = ac.createOscillator();
+    o.type = 'triangle';
+    o.frequency.value = f;
+    o.connect(g);
+    o.start(t + i * 0.14);
+    o.stop(t + 0.7);
+  });
+}
+function spokenBanner(p, text) {
+  const el = p.tile?.querySelector('.spoken');
+  if (!el) return { meta() {}, translation() {}, done() {} };
+  el.querySelector('p').textContent = text;
+  el.querySelector('.sp-tr').textContent = '';
+  el.querySelector('.sp-meta').textContent = '';
+  el.hidden = false;
+  const hideIn = (ms) => { clearTimeout(el.timer); el.timer = setTimeout(() => (el.hidden = true), ms); };
+  hideIn(Math.max(6000, text.length * 80)); // time to read it, even if the voice never ends
+  return {
+    meta: (m) => { el.querySelector('.sp-meta').textContent = m; },
+    translation: (tr) => { el.querySelector('.sp-tr').textContent = tr; },
+    done: () => hideIn(Math.max(3000, text.length * 45)),
+  };
+}
+async function speakReply(p, text, l, local = false) {
+  const tag = typeof l === 'string' && LANG_RE.test(l) ? l : 'en';
+  addEntry('#transcript', transcript, `${p === L ? me.name : p.name} · TrueMeet voice`, text, false);
+  const banner = spokenBanner(p, text);
+  if (local) return banner.meta('Spoken to the room — the others hear the voice');
+  if (target && baseLang(tag) !== target) translate(text, tag).then((tr) => tr && banner.translation(tr));
+  duck(true);
+  let ended = false;
+  const finish = () => { if (!ended) { ended = true; duck(false); banner.done(); } };
+  const r = await speakAloud(speakable(text, baseLang(tag)), tag, { onEnd: finish });
+  if (r === 'spoke') return banner.meta(`TrueMeet voice · ${voiceLabel(tag)}`);
+  finish();
+  earcon();
+  banner.meta(`Text only — no ${voiceLabel(tag)} voice on this device`);
 }
 
 // ---------- Chat, transcript, highlights, reactions ----------
@@ -1554,6 +1643,8 @@ function leave(reason = 'You left the meeting') {
   if (!L.tile) return;
   stopWhisper();
   whisperFrom.clear();
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+  voiceDuck = 0;
   me.id = null; // stop sending before tearing down
   chime(false);
   window.documentPictureInPicture?.window?.close();

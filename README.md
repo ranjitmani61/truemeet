@@ -69,6 +69,11 @@ Requires Node.js 24.2 or later. It has no npm dependencies.
     - reply templates written natively in all seven languages
   - Meeting facts are quoted verbatim, never machine-translated, so a commitment reads exactly as it was written.
   - When Chrome's on-device **LanguageModel** (Prompt API) is already `available`, replies are refined with a JSON-schema-constrained prompt grounded in the same facts, then translated on-device. TrueMeet never starts a model download on its own.
+  - **Speak to room**: TrueMeet says your chosen reply aloud, in the asker's language, on every other participant's device, and shows it as a banner on your tile. This works around browsers being unable to route speech synthesis into a microphone.
+    - The message is validated, at most 280 characters, room-wide only, and limited to one every 2.5 s per person.
+    - Your own browser stays silent, so your mic never carries the reply twice.
+    - Speech synthesis bypasses echo cancellation, so each listener's mic is briefly ducked, and their own captions paused, while the voice plays. Otherwise every listener would re-broadcast the reply.
+    - With no voice installed for that language, listeners get a soft Web Audio cue and a text-only banner instead. Listeners who chose another caption language also see a translation.
   - Toggle under More → Co-Pilot suggestions.
 
 **Time-travel catch-up**
@@ -177,6 +182,11 @@ npm start
     - Bo sees the caption translated on-device.
     - Bo gets a private Co-Pilot card: the question in Spanish, plus two replies grounded in the meeting's whiteboard pin and proposal, in Spanish and in English.
     - Ada never sees the card.
+    - **Speak to room**:
+      - Ada's browser speaks the exact English reply with an English voice (a recording speech-synthesis test double).
+      - Cy, with no voices installed, gets the text-only fallback; Bo's own browser stays silent.
+      - The banner appears on Bo's tile everywhere, and the reply is in everyone's notes.
+      - Measured: Bo receives **0** from Ada's mic while her device speaks, and normal levels afterwards, so no echo.
     - Bo's one-click Send delivers the English reply to Ada's chat.
   - All suites assert zero console errors.
 

@@ -285,3 +285,26 @@ test('decision ledger: server verifies real signatures and refuses forgeries', a
   [a, b, c].forEach((x) => x.close());
   await settle('ledger-room');
 });
+
+test('speak-reply: validated, relayed to everyone else, rate limited', async () => {
+  const post = poster('speak-room');
+  const a = open('speak-room', 'Ana'), wa = await a.next();
+  const b = open('speak-room', 'Bo'), wb = await b.next();
+  const c = open('speak-room', 'Cy');
+  await c.next(); await a.until('join'); await a.until('join'); await b.until('join');
+  assert.equal(await post(wb, { type: 'speak-reply', text: `  Quick status: the deck is in review.${' x'.repeat(200)}`, lang: 'en-US', to: wa.id, extra: 1 }), 204);
+  const heardA = await a.until('speak-reply'), heardC = await c.until('speak-reply');
+  assert.deepEqual(Object.keys(heardA).sort(), ['from', 'lang', 'name', 'text', 'type'], 'extras stripped');
+  assert.equal(heardA.text.length, 280, 'capped');
+  assert.ok(heardA.text.startsWith('Quick status'), 'trimmed');
+  assert.deepEqual([heardA.from, heardA.name, heardA.lang], [wb.id, 'Bo', 'en-US']);
+  assert.equal(heardC.text, heardA.text, 'it is for the whole room, not just one person');
+  assert.equal(await post(wb, { type: 'speak-reply', text: 'again', lang: 'en' }), 429, 'one spoken reply every 2.5 s');
+  assert.equal(await post(wa, { type: 'speak-reply', text: '   ', lang: 'en' }), 400, 'nothing to say');
+  assert.equal(await post(wa, { type: 'speak-reply', text: 'hola', lang: 'spanish' }), 400, 'language must be a language tag');
+  assert.equal(await post(wa, { type: 'speak-reply', text: 'hola' }), 400, 'language required');
+  assert.equal(await post(wa, { type: 'speak-reply', text: 'Hola a todos', lang: 'es' }), 204);
+  assert.equal((await b.until('speak-reply')).lang, 'es');
+  [a, b, c].forEach((x) => x.close());
+  await settle('speak-room');
+});

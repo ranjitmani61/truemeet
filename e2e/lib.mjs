@@ -23,6 +23,25 @@ const fakeSpeech = (lines) => {
   };
 };
 
+// Replaces speech synthesis: 'stub' has one en-US voice and records what it was asked to say;
+// 'mute' has no voices at all (like a bare headless or locked-down machine).
+const fakeVoices = (mode) => {
+  window.__spoken = [];
+  const voices = mode === 'stub' ? [{ name: 'Test voice', lang: 'en-US', default: true, localService: true, voiceURI: 'test-voice' }] : [];
+  window.SpeechSynthesisUtterance = class { constructor(text) { Object.assign(this, { text, lang: '', voice: null, rate: 1 }); } };
+  Object.defineProperty(window, 'speechSynthesis', {
+    configurable: true,
+    value: {
+      speaking: false, getVoices: () => voices, cancel() {}, addEventListener() {}, removeEventListener() {},
+      speak(u) {
+        window.__spoken.push({ text: u.text, lang: u.lang, voice: u.voice?.name ?? null });
+        setTimeout(() => u.onstart?.(), 20);
+        setTimeout(() => u.onend?.(), 4000); // long enough to observe what happens while a voice plays
+      },
+    },
+  });
+};
+
 export async function suite(name) {
   await new Promise((resolve) => server.listen(0, resolve));
   const base = `http://localhost:${server.address().port}`;
@@ -48,9 +67,10 @@ export async function suite(name) {
     errors,
     launch,
     wire,
-    async page(label, { speech, viewport = VIEWPORT, browser: b = browser } = {}) {
+    async page(label, { speech, tts, viewport = VIEWPORT, browser: b = browser } = {}) {
       const ctx = await b.newContext({ viewport, permissions: ['camera', 'microphone'], acceptDownloads: true });
       if (speech) await ctx.addInitScript(fakeSpeech, speech);
+      if (tts) await ctx.addInitScript(fakeVoices, tts);
       return wire(await ctx.newPage(), label);
     },
     // A persistent profile (kept between runs) with background networking allowed, so Chrome can

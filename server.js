@@ -29,6 +29,7 @@ const MAX_HIGHLIGHTS = 200;
 const MAX_PROPOSALS = 50;
 const MAX_IMAGE = 200_000; // data-URL chars for a beamed frame or a snip card
 const TARGETED = new Set(['beam-snapshot', 'whisper']); // strictly one-to-one: never broadcast
+const SPEAK_GAP_MS = 2500; // "Speak to room": at most one synthesized reply per person every 2.5 s
 const CATCHUP_AFTER_MS = 30_000;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 const ICE = {
@@ -48,7 +49,7 @@ const keyOk = (peer, key) => { const a = Buffer.from(String(key)), b = Buffer.fr
 const done = (res, code, data) => { res.writeHead(code, data ? { 'content-type': 'application/json' } : {}); res.end(data && JSON.stringify(data)); };
 
 // ---------- Payload schemas: rebuild every relayed message from allowed fields only ----------
-const str = (v, max) => (typeof v === 'string' ? v.slice(0, max).trim() : undefined);
+const str = (v, max) => (typeof v === 'string' ? v.trim().slice(0, max).trim() : undefined); // trim first: whitespace never eats the budget
 const unit = (v) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : undefined);
 const nid = (v) => (typeof v === 'string' && NID_RE.test(v) ? v : undefined);
 const lang = (v) => (typeof v === 'string' && LANG_RE.test(v) ? v : '');
@@ -128,6 +129,8 @@ const SCHEMA = {
   'turn-queue': (m) => (Array.isArray(m.order) && m.order.length >= 2 && m.order.length <= MAX_PEERS && m.order.every((id) => typeof id === 'string' && PEER_RE.test(id)) && new Set(m.order).size === m.order.length ? { order: [...m.order] } : undefined),
   identity: (m) => { const jwk = publicJwk(m.jwk); return jwk ? { jwk } : undefined; },
   proposal: (m) => { const text = str(m.text, 280); return text ? { text } : undefined; },
+  // A reply the sender wants every other browser to speak aloud (and show) in the given language.
+  'speak-reply': (m) => { const text = str(m.text, 280), l = lang(m.lang); return text && l ? { text, lang: l } : undefined; },
   'proposal-sign': (m) => (typeof m.proposalId === 'string' && PROPOSAL_RE.test(m.proposalId) && typeof m.sig === 'string' && SIG_RE.test(m.sig) ? { proposalId: m.proposalId, sig: m.sig } : undefined),
 };
 
@@ -295,6 +298,11 @@ async function signal(req, res) {
       if (clean.op === 'clear' && clean.all) room.pins.get(clean.s)?.items.clear();
     } else if (type === 'identity' || type === 'proposal' || type === 'proposal-sign') {
       return done(res, await ledgerOp(room, peer, type, clean));
+    } else if (type === 'speak-reply') { // always for the whole room: a `to` field is ignored
+      if (Date.now() - (peer.spokeAt ?? 0) < SPEAK_GAP_MS) return done(res, 429);
+      peer.spokeAt = Date.now();
+      broadcast(room, out, peer);
+      return done(res, 204);
     } else if (type === 'turn-queue') {
       if (!peer.state.auto) return done(res, 403); // only an Auto-Mode director suggests turn order
       if (!clean.order.every((id) => room.peers.has(id))) return done(res, 400);
