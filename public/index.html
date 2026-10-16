@@ -66,6 +66,8 @@
   <symbol id="i-ear" viewBox="0 0 24 24"><path d="M6 8.5a6.5 6.5 0 1 1 13 0c0 6-6 6-6 10a3.5 3.5 0 1 1-7 0"/><path d="M15 8.5a2.5 2.5 0 0 0-5 0v1a2 2 0 1 1 0 4"/></symbol>
   <symbol id="i-stamp" viewBox="0 0 24 24"><path d="M5 22h14M19.27 13.73A2.5 2.5 0 0 0 17.5 13h-11A2.5 2.5 0 0 0 4 15.5V17a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-1.5c0-.66-.26-1.3-.73-1.77M14 13V8.5C14 7 15 7 15 5a3 3 0 0 0-3-3c-1.66 0-3 1-3 3s1 2 1 3.5V13"/></symbol>
   <symbol id="i-volume" viewBox="0 0 24 24"><path d="M11 4.7a.7.7 0 0 0-1.2-.5L6.4 7.6A1.4 1.4 0 0 1 5.4 8H3a1 1 0 0 0-1 1v6a1 1 0 0 0 1 1h2.4a1.4 1.4 0 0 1 1 .4l3.4 3.4a.7.7 0 0 0 1.2-.5z"/><path d="M16 9a5 5 0 0 1 0 6M19.4 18.4a9 9 0 0 0 0-12.7"/></symbol>
+  <symbol id="i-move" viewBox="0 0 24 24"><path d="M12 2v20M2 12h20M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></symbol>
   <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 3v16a2 2 0 0 0 2 2h16M8 17V9M13 17V5M18 17v-3"/></symbol>
 </svg>
 <div class="aurora" aria-hidden="true"></div>
@@ -356,6 +358,7 @@
       <button data-ink="pen" aria-label="Draw" title="Draw"><svg class="i" aria-hidden="true"><use href="#i-pencil"/></svg></button>
       <button data-ink="pin" aria-label="Drop a numbered pin" title="Pin with a note"><svg class="i" aria-hidden="true"><use href="#i-pin-drop"/></svg></button>
       <button data-ink="snip" aria-label="Snip a region onto the whiteboard" title="Snip a region onto the whiteboard"><svg class="i" aria-hidden="true"><use href="#i-scissors"/></svg></button>
+      <button data-ink="move" aria-label="Propose moving a region" title="Propose a move: lift a region and drop it where it should go"><svg class="i" aria-hidden="true"><use href="#i-move"/></svg></button>
       <button class="ink-clear" aria-label="Clear annotations" title="Clear"><svg class="i" aria-hidden="true"><use href="#i-eraser"/></svg></button>
       <button class="local-only ink-allow" aria-label="Let viewers annotate" title="Let viewers annotate"><svg class="i" aria-hidden="true"><use href="#i-users"/></svg></button>
       <button class="local-only ink-pop" aria-label="Pop-out presenter view" title="Presenter view: see annotations over any app"><svg class="i" aria-hidden="true"><use href="#i-pip"/></svg></button>
@@ -368,6 +371,7 @@
       <button class="btn ghost xs tm-live">Jump to live</button>
     </div>
     <span class="q" title="Connecting…"><i></i><i></i><i></i></span>
+    <button class="witness" hidden><svg class="i" aria-hidden="true"><use href="#i-shield"/></svg><span></span></button>
     <button class="whisper-btn" aria-label="Hold to whisper" title="Hold to whisper — or hold Alt over this tile"><svg class="i" aria-hidden="true"><use href="#i-ear"/></svg></button>
     <button class="pin" title="Pin (or double-click)" aria-label="Pin participant"><svg class="i" aria-hidden="true"><use href="#i-pin"/></svg></button>
     <div class="spoken" role="status" aria-live="polite" hidden><svg class="i" aria-hidden="true"><use href="#i-volume"/></svg><div><p></p><small class="sp-tr"></small><small class="sp-meta"></small></div></div>

@@ -5,7 +5,7 @@ Audio and video go directly between participants (WebRTC, DTLS-SRTP), and the se
 
 ```bash
 npm start              # http://localhost:3000  (busy? PORT=3100 npm start)
-npm test               # unit tests (director, time machine, ledger) + server tests
+npm test               # unit tests (director, time machine, ledger, co-pilot, tracker, witness) + server tests
 npm run test:e2e       # headless 2- and 3-browser suites (see Testing)
 ```
 
@@ -55,6 +55,23 @@ Requires Node.js 24.2 or later. It has no npm dependencies.
 - **Snip to whiteboard**: drag the **scissors** tool over a live (or rewound) shared screen.
   - That exact region is cropped from the video at source resolution, correcting for letterboxing, and lands on everyone's whiteboard as a captioned card.
   - Cards sit in a side-by-side grid so the team can annotate and compare captured states while the presenter moves on. Late joiners get them too.
+
+**Living anchors, proposed moves, Proof-of-Frame** (computer vision + crypto, zero dependencies)
+- **Living anchors**: a pin dropped on a shared screen carries a 16×16 grayscale template of what it points at (256 bytes, captured from the exact frame you clicked).
+  - Every participant tracks that template on the video *they* see, about 12 times a second: zero-mean normalized cross-correlation (immune to codec brightness/contrast shifts), a ±12 px local search with sub-pixel refinement, at 320 px analysis width. No extra network traffic, and each pin is locked to its viewer's own frames.
+  - When the feature disappears (scrolled away, window closed), the pin docks at the nearest edge as an **Off-screen** pill. A coarse-to-fine whole-frame scan (half resolution, all four sampling phases) re-locks it when it returns, and refuses to re-lock onto one of several identical copies.
+  - Late joiners receive the template with the pin, so everyone follows the same feature. Featureless spots (flat color) aren't tracked; those pins stay where they were dropped.
+  - Cost, measured: 0.2 ms per tracked pin per tick, plus 0.6 ms to read the frame. A re-lock scan is 4.3 ms, run about 4 times a second just after the feature is lost and once a second after 3 s.
+- **Proposed move** (the four-arrows tool): drag a box around part of a shared screen, then drag the lifted region where it should go (or use the arrow keys, Shift for bigger steps, and Enter).
+  - Everyone, the presenter included and inside the pop-out presenter window, sees the region's **live** pixels at the new spot with a "Proposed move · Ada" tag, an arrow from the old spot, and a background plate where it was.
+  - The plate is a Coons patch (transfinite interpolation) through the live pixels ringing the region. It reproduces solid and linear-gradient UI backgrounds exactly and refreshes about 8 times a second.
+  - The `screen-patch` message is schema-checked (both places inside the frame, at least 2% in size), room-wide, and allowed only while the sharer allows annotation. The author or the sharer dismisses it for everyone; anyone can hide it for themselves.
+- **Proof-of-Frame witness**: while you share, every 2 s your browser computes a 64-bit dHash of the frame it is sending (9×8 luma cells). It chains it (`chain = SHA-256(prev:seq:dHash:t)`) and signs it with your decision-ledger key, the same key that is folded into the safety code.
+  - The server refuses frames that don't verify, don't extend your chain, are replayed, or are more than 30 s old (`witness-frame`, at most one per 500 ms).
+  - Each viewer verifies the signature and the chain again. It hashes what its own decoder displayed in the window from t−0.4 s to t+2.2 s, and the share's badge reads **Witness Verified · Frame #N** when the two are within 10 of 64 bits. Two mismatches in a row show **Frame Mismatch**; a bad signature or broken chain shows **Tamper detected**.
+  - Clicking the badge saves the exact frame on screen as PNG evidence. **Download notes** lists every frame (VALID / MISMATCH / INVALID, with the measured bit distance) plus a machine-verifiable chain.
+  - **`/verify.html`** re-checks the notes offline in the browser (ledger and witness), and proves which signed frame a saved screenshot matches.
+  - **What it proves, and its limit**: the witness proves *which screen* the signer was showing and that your video matched it. It is perceptual, not pixel-exact: a single edited line of text is still "the same frame". Measured on synthetic UI screens, the same screen after codec damage differs by 0–4 bits. Different screens that share a flat backdrop differ by 16.6 bits on average, but 12% of such pairs fall within 10 bits, so a look-alike substitute can pass. A 256-bit dHash didn't separate them cleanly either (codec damage up to 28/256, different screens down to 19/256), so the 64-bit design was kept.
 
 **Live Polyglot + private "Best Answer" Co-Pilot**
 - **Live cross-language captions**: pick your language under More → Translate captions. Every caption from someone speaking another language is translated on your device as they speak, interim words included, with an `EN → ES` tag. Results are cached and the newest always wins.
@@ -138,7 +155,9 @@ npm start
 - `public/ledger.js`: canonical JSON, ECDSA identities, sign/verify, and ledger verification. It runs unchanged in browsers, in the server, and in offline verification. Unit-tested, including tamper cases.
 - `public/copilot.js`: Co-Pilot intent detection, entity extraction, context retrieval, native-language reply templates, read-aloud phrasing and Devanagari romanization. Pure and unit-tested in `copilot.test.js`.
 - `public/spatial.js`: the whisper's Web Audio mix, engaged only while a whisper is active, so Chrome's normal echo-cancellation path is used the rest of the time.
-- `public/ink.js`: one ink engine for annotation, pins and the whiteboard.
+- `public/tracker.js`: living anchors (ZNCC block matching, sub-pixel peaks, four-phase coarse re-lock, docking) and the proposed-move pixel math (Coons-patch plate, tether geometry). Pure and unit-tested in `tracker.test.js`.
+- `public/witness.js`: dHash, Hamming distance, the SHA-256 frame chain, ECDSA frame signing and checking, offline verification and screenshot matching. It runs unchanged in browsers, in the server and in `verify.html`. Unit-tested in `witness.test.js`.
+- `public/ink.js`: one ink engine for annotation, pins, proposed moves and the whiteboard.
   - Strokes use normalized coordinates over the content rectangle, so letterboxed video lines up for everyone.
   - Pointer input uses coalesced events and is batched about 25 times per second.
   - Remote input is validated, and strokes are capped per surface.
@@ -153,6 +172,17 @@ npm start
   - Auto-highlight relay and caption buffering.
   - Late-joiner catch-up, both from the waiting room and after 30 seconds.
   - Schema stripping.
+  - Living anchors (`tracker.test.js`), on synthetic moving frames with codec-like noise:
+    - follows a translating feature to within 0.6 px
+    - goes `occluded` when the feature is gone, and re-locks when it returns elsewhere
+    - re-locks after jumps beyond the search radius
+    - refuses ambiguous duplicates; ignores flat templates
+    - also covers the Coons plate (a gradient reconstructed to ±1 level) and the move geometry
+  - Proof-of-Frame (`witness.test.js`):
+    - dHash: codec damage stays within 10 bits; unrelated images differ by more than 20; the measured ceiling on look-alike screens is pinned
+    - the signed chain verifies; a swapped picture, a forged link, a gap, a replay, another key or another room are each rejected
+    - an edited export pinpoints the edited frame
+  - Server: pin templates and `screen-patch` validated and room-wide; `witness-frame` relayed only when signed, chained, fresh and not too frequent.
 - `npm run test:e2e`: headless Chrome suites that start their own server on a free port.
   - Each suite uses fake camera/mic devices, plus a fake SpeechRecognition so captions can be tested.
   - Needs `playwright-core` (not a dependency): `PLAYWRIGHT_CORE=/path/to/playwright-core/index.mjs`. Optional: `CHROME=/path/to/chrome`, and `E2E_OUT=dir` for screenshots.
@@ -188,6 +218,15 @@ npm start
       - The banner appears on Bo's tile everywhere, and the reply is in everyone's notes.
       - Measured: Bo receives **0** from Ada's mic while her device speaks, and normal levels afterwards, so no echo.
     - Bo's one-click Send delivers the English reply to Ada's chat.
+  - `e2e/deep-tech.mjs` (part of `npm run test:e2e`, 3 browsers, about 35 s). Bo shares a deterministic animated canvas screen through the real WebRTC encoder.
+    - **Living anchors**: Ada pins an orange badge. As it glides across Bo's screen, the pin follows it through at least 4 intermediate positions on every participant's own decoded video, including Bo's. It docks at the bottom edge as "Off-screen" when the badge is hidden, and re-locks within 0.02 when the badge reappears elsewhere.
+      - Measured here: about 7 fps decoded in headless Chrome. A pin can only move as often as its video delivers frames.
+    - **Proposed move**: Cy lifts the magenta card and drops it lower down. Bo's own tile, Ada's tile and Bo's real pop-out presenter window show card pixels at the new spot and the blue gradient plate where it was (read back from the canvas).
+    - **Proof-of-Frame**: Ada's and Cy's badges reach "Witness Verified · Frame #N" across real compression (measured 1/64 bits). The exported notes list the frames VALID, and the chain verifies offline in Node.
+    - **`verify.html`**:
+      - Ada's saved frame matches a signed frame.
+      - A screenshot of the meeting window matches none (closest at 36/64 bits).
+      - An edited dHash in the notes is flagged INVALID.
   - All suites assert zero console errors.
 
 ## Privacy notes
@@ -195,6 +234,7 @@ npm start
 - Audio and video never touch the server.
 - Screen Time Machine frames stay in each viewer's memory; only frames you explicitly beam leave your browser, and only to the presenter. Snips go to the whiteboard, like drawings.
 - Ledger private keys are non-extractable and never leave the tab. Only public keys and signatures are shared.
+- Living anchors send only a 16×16 grayscale patch with each pin. Tracking runs locally. Proof-of-Frame sends only 64-bit hashes, chain hashes and signatures, never pixels; saved evidence frames go only to your own downloads.
 - Chat, captions and pins already pass through it as signaling text. For catch-up, the server now keeps the last 40 final caption lines and up to 200 highlights per room, **in memory only**, dropped when the room empties.
 - Away detection, talk-time and the Co-Pilot run entirely in your browser. A Co-Pilot reply leaves your device only when you click Send.
 - Captions use the browser's speech service (in Chrome this may use Google's servers). Translation runs on-device.

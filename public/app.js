@@ -1,10 +1,13 @@
 // TrueMeet client: lobby, WebRTC mesh, chat, captions + translation, recording, whiteboard,
 // screen annotation + pins, highlights, Auto-Mode, catch-up, waiting room, safety codes, host controls,
-// Screen Time Machine, lean-in whispers, signed decision ledger, polite turn engine, snip-to-board.
+// Screen Time Machine, lean-in whispers, signed decision ledger, polite turn engine, snip-to-board,
+// living anchors (tracked pins), proposed moves, and the signed Proof-of-Frame witness.
 import { apply as inkApply, bindPointer, boardCards, containRect, createSurface, dropSurface, exportPng, fixedRect, newId, paintOverlay, penStrokes } from './ink.js';
 import { awayMonitor, burstDetector, chooseFocus, collisionDetector, crosstalkDetector, focusDirector, frameDiff, hesitationDetector, phraseTrigger, turnOrder } from './director.js';
 import { RING, agoLabel, captureFrame, cardSlot, createRing, cropToDataUrl, fitWithin, normRect } from './timemachine.js';
-import { LEDGER_BEGIN, LEDGER_END, canonical, createIdentity, fingerprint, proposalPayload, sign, verify, verifyLedger } from './ledger.js';
+import { LEDGER_BEGIN, LEDGER_END, b64u, canonical, createIdentity, fingerprint, proposalPayload, sign, verify, verifyLedger } from './ledger.js';
+import { TRACK, capture, createAnchor, dock, readLuma, track } from './tracker.js';
+import { WITNESS, WITNESS_BEGIN, WITNESS_END, checkFrame, frameHash, hamming, signFrame, verifyWitness } from './witness.js';
 import { createSpatialMixer } from './spatial.js';
 import { analyze, hasDevanagari, renderAnswer, renderBasis, renderIntent, speakable, transliterate } from './copilot.js';
 
@@ -65,6 +68,7 @@ const idOf = (p) => (p === L ? me.id : p.id);
 const show = (id) => document.querySelectorAll('.view').forEach((v) => (v.hidden = v.id !== id));
 const link = () => `${location.origin}/${room}`;
 const clock = (t = Date.now()) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+const clockS = (t) => new Date(t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 const stamp = () => new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-');
 const initials = (n) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => [...w][0].toUpperCase()).join('') || '?';
 const hue = (n) => { let h = 7; for (const c of n) h = (h * 31 + c.codePointAt(0)) >>> 0; return h % 360; };
@@ -140,19 +144,21 @@ async function handle(m) {
       const now = Date.now();
       if (!p.state.mic && m.state.mic) hesitation.unmute(p.id, now, othersTalking(p));
       if (p.state.mic && !m.state.mic && hesitation.mute(p.id, now) && host === me.id) nudgeCard(p); // private to the host
-      if (p.state.screen && !m.state.screen) endTimeMachine(p);
+      if (p.state.screen && !m.state.screen) { endTimeMachine(p); p.wit = p.samples = p.witState = null; }
       if (m.state.screen && !p.state.screen) p.shareAt = now;
       if (m.state.hand && !p.state.hand) toast(`${p.name} raised a hand`, 'hand');
       if (m.state.rec && !p.state.rec) toast(`${p.name} started recording`, 'record');
-      if (!(m.state.screen && m.state.ink)) p.surface.strokes.clear(); // share ended or annotation switched off
+      if (!(m.state.screen && m.state.ink)) { p.surface.strokes.clear(); p.surface.patches.clear(); } // share ended or annotation switched off
       p.surface.dirty = true;
       p.state = m.state;
-      paint(p); renderPeople(); paintRec(); layout();
+      paint(p); paintWitness(p); renderPeople(); paintRec(); layout();
       return;
     }
     case 'identity': if (p) { p.jwk = m.jwk; p.code = null; } return;
     case 'whisper': return onWhisper(p, m.on);
     case 'beam-snapshot': return p && beamCard(p, m);
+    case 'screen-patch': return p && onPatch(p, m);
+    case 'witness-frame': return p && onWitness(p, m);
     case 'turn-queue': return showTurnQueue(m.order);
     case 'nudge': return nudged(m.name);
     case 'proposal': return onProposal(m);
@@ -438,6 +444,9 @@ function stopShare() {
   screenTrack = null;
   me.screen = false;
   L.surface?.strokes.clear();
+  L.surface?.patches.clear();
+  witnessOut = null;
+  paintWitness(L);
   pushVideo(); syncState();
 }
 function toggleHand() { me.hand = !me.hand; syncState(); }
@@ -1015,6 +1024,195 @@ function snip(p, { x0, y0, x1, y1 }) {
   toast('Snipped to the whiteboard — press W to compare', 'scissors');
 }
 
+// ---------- Living anchors ----------
+// Pins on a shared screen carry a 16×16 luma template of what they point at; every participant
+// tracks it locally on the frames they see (~12 Hz), so pins follow scrolled or dragged content,
+// dock at the edge as "Off-screen" while it's hidden, and re-lock when it returns.
+const MAX_ANCHORS = 24; // ponytail: the 24 newest open pins per share are tracked; older ones stay where dropped
+const lumaOf = (v) => readLuma(v, TRACK.width, Math.max(TRACK.patch, Math.round((TRACK.width * v.videoHeight) / v.videoWidth)));
+function pinTemplate(video, x, y) {
+  if (!video.videoWidth) return undefined;
+  const tpl = capture(lumaOf(video), x, y);
+  return tpl ? b64u.encode(tpl) : undefined; // flat spot: nothing to follow, the pin stays put
+}
+const sameSpot = (a, b) => a === b || (!!a && !!b && a.state === b.state && Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4);
+function trackPins() {
+  for (const p of all()) {
+    const s = p.surface, v = p.video;
+    if (!s?.pins.size || !p.state.screen || !v?.videoWidth) continue;
+    const open = [...s.pins.values()].filter((pin) => pin.tpl && !pin.resolved).slice(-MAX_ANCHORS);
+    if (!open.length) continue;
+    const frame = lumaOf(v);
+    for (const pin of open) {
+      const a = track((pin.anchor ??= createAnchor(b64u.decode(pin.tpl), pin.x, pin.y)), frame);
+      const live = a.state === 'occluded' ? { ...dock(a.x, a.y), state: 'occluded' } : a.state === 'locked' ? { x: a.x, y: a.y, state: 'locked' } : null;
+      if (!sameSpot(pin.live, live)) { pin.live = live; s.dirty = true; }
+    }
+  }
+}
+
+// ---------- Proposed moves ----------
+// "What if this were over there?": anyone allowed to annotate lifts a region of a shared screen
+// and drops it elsewhere. Everyone — the presenter included, in the pop-out presenter window too —
+// sees the live pixels at the new spot, a background plate where they were, and an arrow.
+function proposeMove(p, box) {
+  const patchId = newId();
+  inkApply(p.surface, { op: 'patch', patchId, ...box, name: me.name }, me.id);
+  send({ type: 'screen-patch', s: `share:${idOf(p)}`, op: 'add', patchId, ...box });
+  p.inkAt = Date.now();
+  toast(p === L ? 'Proposed move shown to everyone' : `Proposed move shown to ${p.name} and everyone else`, 'move');
+}
+function onPatch(sender, m) {
+  const target = surfaceFor(m.s);
+  if (!target?.owner) return;
+  const { surface, owner } = target;
+  if (m.op === 'remove') return inkApply(surface, { op: 'unpatch', patchId: m.patchId, force: sender === owner }, sender.id);
+  if (sender !== owner && !(owner.state.screen && owner.state.ink)) return;
+  inkApply(surface, { ...m, op: 'patch', name: sender.name }, sender.id);
+  owner.inkAt = Date.now();
+  flagDrawing(sender);
+  if (owner === L) toast(`${sender.name} proposes moving part of your screen`, 'move');
+}
+function unpatch(p, patchId) { // my proposal, or any proposal on my screen: gone for everyone; otherwise just for me
+  const pt = p.surface.patches.get(patchId);
+  if (!pt) return;
+  inkApply(p.surface, { op: 'unpatch', patchId, force: true }, me.id);
+  if (pt.by === me.id || p === L) send({ type: 'screen-patch', s: `share:${idOf(p)}`, op: 'remove', patchId });
+}
+
+// ---------- Proof-of-Frame witness ----------
+// While I share, every 2 s: dHash the frame I'm sending, chain it to the last one, sign it with my
+// ledger key, relay it. As a viewer: verify the signature and the chain, hash what my decoder
+// shows, and badge the share "Witness Verified · Frame #N" when the two agree (≤ 10 of 64 bits).
+const MAX_WITNESS_FRAMES = 5400; // ponytail: 3 h of frames per chain kept for the notes; older ones are dropped
+const witnessChains = []; // every chain this tab signed or watched, for the notes
+let witnessOut = null, witnessBusy = false, grabber = null;
+const chainRecord = (name, fp, jwk, mine) => { const c = { name, fingerprint: fp, jwk, mine, frames: [], rejected: [] }; witnessChains.push(c); return c; };
+const keep = (list, item) => { list.push(item); if (list.length > MAX_WITNESS_FRAMES) list.shift(); };
+async function shareLuma() { // straight from the track, so it keeps working while my tab is in the background
+  const [w, h] = WITNESS.read;
+  if ('ImageCapture' in window) {
+    try {
+      if (grabber?.track !== screenTrack) grabber = new ImageCapture(screenTrack);
+      const bmp = await grabber.grabFrame();
+      try { return readLuma(bmp, w, h); } finally { bmp.close(); }
+    } catch {}
+  }
+  return L.video?.videoWidth ? readLuma(L.video, w, h) : null;
+}
+async function witnessTick() {
+  if (!screenTrack || !identity || !me.id || witnessBusy) return;
+  witnessBusy = true;
+  try {
+    const out = (witnessOut ??= { last: null, rec: chainRecord(me.name, identity.fingerprint, identity.jwk, true) });
+    const luma = await shareLuma();
+    if (!luma) return;
+    const f = await signFrame(identity.privateKey, room, out.last, frameHash(luma), Date.now() - skew);
+    if (witnessOut !== out) return; // the share ended meanwhile
+    out.last = f;
+    keep(out.rec.frames, f);
+    send({ type: 'witness-frame', ...f });
+    paintWitness(L);
+  } finally {
+    witnessBusy = false;
+  }
+}
+function sampleShares() { // what each viewer actually displays, hashed, for matching against signed frames
+  const [w, h] = WITNESS.read, now = Date.now() - skew;
+  for (const p of peers.values()) {
+    if (!p.state.screen || !p.jwk || !p.video.videoWidth) continue;
+    (p.samples ??= []).push({ t: now, hash: frameHash(readLuma(p.video, w, h)) });
+    if (p.samples.length > 40) p.samples.shift();
+  }
+}
+async function onWitness(p, m) {
+  if (!p.jwk) return; // nothing to verify against yet
+  p.wit ??= { last: null, misses: 0, rec: chainRecord(p.name, await fingerprint(p.jwk), p.jwk, false) }; // a new share starts a new chain (reset on share end)
+  const w = p.wit, f = { seq: m.seq, t: m.t, dhash: m.dhash, prev: m.prev, chain: m.chain, sig: m.sig };
+  const why = await checkFrame(p.jwk, room, f, w.last); // never take the server's word for it
+  if (p.wit !== w) return;
+  if (why !== 'ok') { keep(w.rec.rejected, { seq: f.seq, t: f.t, why }); return witnessState(p, 'invalid', f.seq, why); }
+  w.last = f;
+  const e = { ...f, seen: null, distance: null, verdict: 'pending' };
+  keep(w.rec.frames, e);
+  if (!p.witState) witnessState(p, 'pending', f.seq);
+  setTimeout(() => judge(p, w, e), Math.max(0, f.t + skew + WITNESS.window[1] - Date.now())); // once my decoder has shown it
+}
+function judge(p, w, e) {
+  const near = (p.samples ?? []).filter((x) => x.t >= e.t + WITNESS.window[0] && x.t <= e.t + WITNESS.window[1]);
+  if (!near.length) { e.verdict = 'unseen'; return; } // my tile wasn't decoding then
+  const best = near.map((x) => ({ hash: x.hash, d: hamming(e.dhash, x.hash) })).reduce((a, b) => (b.d < a.d ? b : a));
+  Object.assign(e, { seen: best.hash, distance: best.d, verdict: best.d <= WITNESS.match ? 'valid' : 'mismatch' });
+  if (p.wit !== w) return;
+  w.misses = e.verdict === 'mismatch' ? w.misses + 1 : 0;
+  if (e.verdict === 'valid') witnessState(p, 'verified', e.seq);
+  else if (w.misses >= 2) witnessState(p, 'mismatch', e.seq); // one late frame isn't an alarm; two in a row is
+}
+function witnessState(p, state, seq, why) {
+  const was = p.witState;
+  Object.assign(p, { witState: state, witSeq: seq, witWhy: why });
+  paintWitness(p);
+  if (state === was) return;
+  if (state === 'invalid') toast(`${p.name}’s screen: a frame failed verification (${why})`, 'alert', 6000);
+  if (state === 'mismatch') toast(`${p.name}’s screen doesn’t match what they signed`, 'alert', 6000);
+}
+function paintWitness(p) {
+  const b = p.tile?.querySelector('.witness');
+  if (!b) return;
+  const mine = p === L, state = mine ? (witnessOut?.last ? 'signing' : null) : p.state.screen ? p.witState : null;
+  b.hidden = !state;
+  if (!state) return;
+  const seq = mine ? witnessOut.last.seq : p.witSeq;
+  const text = { signing: `Signing frames · #${seq}`, pending: 'Witness pending…', verified: `Witness Verified · Frame #${seq}`, mismatch: `Frame Mismatch · #${seq}`, invalid: `Tamper detected · #${seq}` }[state];
+  const detail = {
+    signing: 'Every 2 s the frame you share is hashed, chained and signed with your device key; viewers check what they receive.',
+    pending: 'Checking signed frames against what you see…',
+    verified: `What you see matches the frame ${p.name} signed with their device key — compare safety codes to know the key is theirs.`,
+    mismatch: `What you see differs from the frames ${p.name} signed.`,
+    invalid: `A frame failed verification (${p.witWhy}).`,
+  }[state];
+  b.dataset.state = state;
+  b.querySelector('span').textContent = text;
+  b.querySelector('use').setAttribute('href', state === 'mismatch' || state === 'invalid' ? '#i-alert' : '#i-shield');
+  b.title = `${detail} Click to save this frame as evidence.`;
+  b.setAttribute('aria-label', `${text}. ${b.title}`);
+}
+async function saveEvidence(p) { // the exact pixels on screen, provable later against the signed chain
+  const v = p.video;
+  if (!v.videoWidth) return;
+  const c = Object.assign(document.createElement('canvas'), { width: v.videoWidth, height: v.videoHeight });
+  c.getContext('2d').drawImage(v, 0, 0);
+  const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/png'));
+  save(blob, `truemeet-frame-${stamp()}.png`);
+  toast('Frame saved — prove it later: drop it with your notes on /verify.html', 'download');
+}
+async function witnessSection() {
+  const chains = witnessChains.filter((c) => c.frames.length || c.rejected.length);
+  if (!chains.length) return [];
+  const signed = chains.filter((c) => c.frames.length);
+  const witness = {
+    version: 1, room, exportedAt: new Date().toISOString(),
+    algorithm: 'dHash-64 of 9×8 luma cells · chain = SHA-256(prev:seq:dHash:t) · ECDSA P-256 + SHA-256 over canonical JSON {chain, dhash, prev, room, seq, t}',
+    chains: signed.map(({ name, fingerprint: fp, jwk, frames }) => ({
+      name, fingerprint: fp, jwk,
+      frames: frames.map(({ seq, t, dhash, prev, chain, sig, seen, distance }) => ({ seq, t, dhash, prev, chain, sig, ...(seen && { seen, distance }) })),
+    })),
+  };
+  const check = await verifyWitness(witness);
+  const lines = ['SCREEN WITNESS (every frame’s signature and chain link re-verified in this browser at export)'];
+  for (const c of chains) {
+    const verdicts = check.chains[signed.indexOf(c)]?.frames ?? [];
+    lines.push(`${c.mine ? 'Your screen (frames you signed)' : `${c.name}’s screen`} · key ${c.fingerprint} · ${c.frames.length} signed frame${c.frames.length === 1 ? '' : 's'}`);
+    c.frames.forEach((f, i) => {
+      const word = !verdicts[i]?.valid ? 'INVALID' : c.mine ? 'SIGNED' : { valid: 'VALID', mismatch: 'MISMATCH', unseen: 'UNSEEN' }[f.verdict] ?? 'PENDING';
+      lines.push(`    ${word.padEnd(8)} #${f.seq} · ${clockS(f.t + skew)} · dHash ${f.dhash}${f.distance != null ? ` · ${f.distance}/64 bits from what you saw` : ''}`);
+    });
+    for (const r of c.rejected) lines.push(`    REJECTED #${r.seq} · ${clockS(r.t + skew)} · ${r.why}`);
+  }
+  if (!signed.length) return lines;
+  return [...lines, '', `Machine-verifiable copy (drop these notes on ${location.origin}/verify.html, or use verifyWitness() from public/witness.js):`, WITNESS_BEGIN, JSON.stringify(witness, null, 2), WITNESS_END];
+}
+
 // ---------- Decision ledger ----------
 function proposeFrom(text) {
   notice('propose', (el) => {
@@ -1175,7 +1373,7 @@ function renderCatchup(m) {
   });
 }
 async function downloadNotes() {
-  if (!transcript.length && !chatLog.length && !highlights.length && !pinLog.size && !proposals.size) return toast('Nothing yet — turn on live captions, chat, drop a pin or mark a highlight');
+  if (!transcript.length && !chatLog.length && !highlights.length && !pinLog.size && !proposals.size && !witnessChains.length) return toast('Nothing yet — turn on live captions, chat, drop a pin or mark a highlight');
   const line = (x) => `[${clock(x.t)}] ${x.name}: ${x.text}${x.tr ? `\n          → ${x.tr}` : ''}`;
   const hl = (x) => `[+${duration(Math.max(0, x.t - started))}${x.rec != null ? ` · rec ${duration(x.rec)}` : ''}] ${x.auto ? `[Auto] ${x.reason}` : x.name}${x.context ? ` — ${x.context}` : ''}`;
   const pin = (x) => `#${x.n} · ${x.name} · ${clock(x.t)} · ${x.label}${x.note ? ` — “${x.note}”` : ''}${x.resolved ? ` (resolved by ${x.resolvedBy})` : ''}`;
@@ -1185,7 +1383,8 @@ async function downloadNotes() {
     'PINS', ...[...pinLog.values()].map(pin), '',
     'TRANSCRIPT', ...transcript.map(line), '',
     'CHAT', ...chatLog.map(line), '',
-    ...(await ledgerSection()),
+    ...(await ledgerSection()), '',
+    ...(await witnessSection()),
   ].join('\n');
   save(new Blob([text], { type: 'text/plain' }), `truemeet-${room}-${stamp()}.txt`);
 }
@@ -1274,7 +1473,7 @@ function placePop(el, box, px, py) {
   el.style.left = `${Math.max(8, Math.min(px + 16, box.clientWidth - 260))}px`;
   el.style.top = `${Math.max(8, Math.min(py - 18, box.clientHeight - 120))}px`;
 }
-function openPinEditor(surface, s, x, y, color) {
+function openPinEditor(surface, s, x, y, color, tpl) {
   closePinPop();
   const box = surface.canvas.parentElement, r = surface.rect(surface.canvas.clientWidth, surface.canvas.clientHeight);
   if (!r) return;
@@ -1290,8 +1489,8 @@ function openPinEditor(surface, s, x, y, color) {
     const pid = newId(), note = input.value.trim().slice(0, 140);
     if (s === null) inkApply(surface, { op: 'pin', pid, x, y, note, color, name: me.name, n: surface.pins.size + 1 }, me.id); // private, until beamed
     else {
-      inkApply(surface, { op: 'pin', pid, x, y, note, color, name: me.name }, me.id);
-      send({ type: 'ink', s: typeof s === 'function' ? s() : s, op: 'pin', pid, x, y, note, color });
+      inkApply(surface, { op: 'pin', pid, x, y, note, color, name: me.name, tpl }, me.id);
+      send({ type: 'ink', s: typeof s === 'function' ? s() : s, op: 'pin', pid, x, y, note, color, ...(tpl && { tpl }) });
     }
     closePinPop();
   };
@@ -1352,7 +1551,7 @@ function paintBoardTools() {
 }
 function setInkTool(t) {
   inkTool = t || null;
-  for (const p of all()) paint(p);
+  for (const p of all()) { p.surface?.cancelLift?.(); paint(p); }
 }
 
 // ---------- Rendering ----------
@@ -1371,20 +1570,23 @@ function makeTile(p, local = false) {
   t.style.viewTransitionName = `tile-${newId()}`;
   if (!CAPS.popout) t.querySelector('.ink-pop').hidden = true;
   p.surface = createSurface(t.querySelector('.ink'), containRect(p.video), null, t.querySelector('.pins'));
+  p.surface.media = p.video;
   p.surface.onPin = (pid, el) => openPinCard(p.surface, () => `share:${idOf(p)}`, pid, el);
+  p.surface.onUnpatch = (patchId) => unpatch(p, patchId);
   bindPointer(p.surface, {
     tool: () => (p.state.screen && (p.state.ink || p === L) ? inkTool : null),
     color: myInk,
     me: () => me.id,
     emit: (m) => { p.inkAt = Date.now(); send({ type: 'ink', s: `share:${idOf(p)}`, ...m }); },
-    onPinDrop: (x, y) => openPinEditor(p.surface, () => `share:${idOf(p)}`, x, y, myInk()),
+    onPinDrop: (x, y) => openPinEditor(p.surface, () => `share:${idOf(p)}`, x, y, myInk(), pinTemplate(p.video, x, y)), // template from the frame clicked
     onSnip: (r) => snip(p, r),
+    onPatch: (box) => proposeMove(p, box),
   });
   // Rewound frames get their own private ink layer: marks there are never sent, only beamed.
   p.past = createSurface(t.querySelector('.ink-past'), containRect(t.querySelector('.tm-frame')), null, t.querySelector('.pins-past'));
   p.past.onPin = (pid, el) => openPinCard(p.past, null, pid, el);
   bindPointer(p.past, {
-    tool: () => (p.tmView ? inkTool : null),
+    tool: () => (p.tmView && inkTool !== 'move' ? inkTool : null), // a proposed move needs the live screen
     color: myInk,
     me: () => me.id,
     emit: () => {},
@@ -1394,6 +1596,7 @@ function makeTile(p, local = false) {
   t.querySelector('.tm-range').addEventListener('input', (e) => scrub(p, Number(e.target.value)));
   t.querySelector('.tm-live').onclick = () => jumpLive(p);
   t.querySelector('.tm-beam').onclick = () => beam(p);
+  t.querySelector('.witness').onclick = () => saveEvidence(p);
   const wb = t.querySelector('.whisper-btn'); // hold to whisper (pointer, or Space/Enter on the focused button)
   wb.addEventListener('pointerdown', (e) => { e.preventDefault(); wb.setPointerCapture(e.pointerId); startWhisper(p); });
   for (const type of ['pointerup', 'pointercancel', 'lostpointercapture']) wb.addEventListener(type, () => stopWhisper(p));
@@ -1616,6 +1819,7 @@ async function openLobby(code) {
     board.pins.clear();
     board.cards.clear();
     proposals.clear();
+    witnessChains.length = 0;
   }
   room = code;
   show('lobby');
@@ -1670,7 +1874,7 @@ function leave(reason = 'You left the meeting') {
   setBoard(false);
   $('#endTitle').textContent = reason;
   $('#endMeta').textContent = `${room} · ${duration(Date.now() - started)}`;
-  $('#endNotes').hidden = !transcript.length && !chatLog.length && !highlights.length;
+  $('#endNotes').hidden = !transcript.length && !chatLog.length && !highlights.length && !witnessChains.length;
   show('end');
 }
 
@@ -1775,6 +1979,9 @@ setInterval(() => {
     if (me.mic) { toggleMic(); toast('Auto-muted — you seemed to be away. Press M to unmute.', 'mic-off'); }
   }
 }, 1000);
+setInterval(trackPins, 1000 / TRACK.hz);
+setInterval(sampleShares, WITNESS.sampleMs);
+setInterval(witnessTick, WITNESS.intervalMs);
 new ResizeObserver(fit).observe($('#stage'));
 
 // ---------- Wiring ----------

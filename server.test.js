@@ -308,3 +308,90 @@ test('speak-reply: validated, relayed to everyone else, rate limited', async () 
   [a, b, c].forEach((x) => x.close());
   await settle('speak-room');
 });
+
+test('living anchors + proposed moves: templates and patches validated, on live shares only', async () => {
+  const post = poster('patch-room');
+  const a = open('patch-room', 'Ana'), wa = await a.next();
+  const b = open('patch-room', 'Bo'), wb = await b.next();
+  await a.until('join');
+  const share = `share:${wa.id}`, tpl = 'A'.repeat(342);
+  const patch = { type: 'screen-patch', s: share, op: 'add', patchId: 'm1', sx: 0.6, sy: 0.2, sw: 0.2, sh: 0.15, tx: 0.1, ty: 0.6 };
+
+  assert.equal(await post(wb, patch), 403, 'nothing is being shared');
+  assert.equal(await post(wa, { type: 'state', state: { screen: true, ink: true } }), 204);
+  await b.until('state');
+
+  assert.equal(await post(wb, { type: 'ink', s: share, op: 'pin', pid: 'p1', x: 0.3, y: 0.4, tpl, extra: 1 }), 204);
+  const pin = await a.until('ink');
+  assert.equal(pin.tpl, tpl, 'the template travels with the pin');
+  await b.until('ink');
+  for (const bad of ['A'.repeat(341), `${'A'.repeat(341)}=`, `${'A'.repeat(341)}+`, 42]) {
+    assert.equal(await post(wb, { type: 'ink', s: share, op: 'pin', pid: 'p2', x: 0.1, y: 0.1, tpl: bad }), 400, String(bad).slice(-3));
+  }
+  assert.equal(await post(wb, { type: 'ink', s: 'board', op: 'pin', pid: 'p3', x: 0.1, y: 0.1, tpl }), 400, 'board pins are not tracked');
+  const late = open('patch-room', 'Cy');
+  await late.next();
+  assert.equal((await late.until('pins')).pins[0].tpl, tpl, 'late joiners track the same feature');
+  await a.until('join'); await b.until('join');
+
+  assert.equal(await post(wb, { ...patch, to: wa.id, name: 'Spoofed', extra: 1 }), 204);
+  const seen = await a.until('screen-patch');
+  assert.deepEqual(seen, { type: 'screen-patch', from: wb.id, name: 'Bo', s: share, op: 'add', patchId: 'm1', sx: 0.6, sy: 0.2, sw: 0.2, sh: 0.15, tx: 0.1, ty: 0.6 }, 'sanitised, stamped');
+  assert.equal((await late.until('screen-patch')).patchId, 'm1', 'room-wide, never one-to-one');
+  for (const bad of [{ sw: 0.01 }, { tx: 0.9 }, { sx: 0.85 }, { ty: '0.1' }, { op: 'grow' }, { patchId: 'no spaces' }, { s: 'board' }, { s: 'share:../x' }]) {
+    assert.equal(await post(wb, { ...patch, ...bad }), 400, JSON.stringify(bad));
+  }
+  assert.equal(await post(wb, { type: 'screen-patch', s: share, op: 'remove', patchId: 'm1' }), 204);
+  assert.deepEqual(await a.until('screen-patch'), { type: 'screen-patch', from: wb.id, name: 'Bo', s: share, op: 'remove', patchId: 'm1' });
+  assert.equal(await post(wa, { type: 'state', state: { screen: true, ink: false } }), 204);
+  assert.equal(await post(wb, patch), 403, 'the sharer turned annotation off');
+  assert.equal(await post(wa, { ...patch, patchId: 'm2' }), 204, 'the sharer can still propose on their own screen');
+  [a, b, late].forEach((x) => x.close());
+  await settle('patch-room');
+});
+
+test('proof-of-frame: server relays only signed frames that extend the sharer’s chain', async () => {
+  const { GENESIS, link, signFrame } = await import('./public/witness.js');
+  const post = poster('witness-room');
+  const a = open('witness-room', 'Ana'), wa = await a.next();
+  const b = open('witness-room', 'Bo'), wb = await b.next();
+  await a.until('join');
+  const bo = await createIdentity(), eve = await createIdentity(), room = 'witness-room';
+  const frame = (last, dhash = '0f0f0f0f0f0f0f0f', t = Date.now(), key = bo.privateKey) => signFrame(key, room, last, dhash, t);
+  const f1 = await frame(null);
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1 }), 409, 'not sharing');
+  assert.equal(await post(wb, { type: 'state', state: { screen: true } }), 204);
+  await a.until('state');
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1 }), 409, 'no published key to verify against');
+  assert.equal(await post(wb, { type: 'identity', jwk: bo.jwk }), 204);
+  await a.until('identity');
+
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1, sig: 'short' }), 400, 'schema');
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1, dhash: 'ffffffffffffffff' }), 400, 'picture swapped after signing');
+  assert.equal(await post(wb, { type: 'witness-frame', ...(await frame(null, undefined, undefined, eve.privateKey)) }), 400, 'someone else’s key');
+  assert.equal(await post(wb, { type: 'witness-frame', ...(await frame(null, undefined, Date.now() - 120_000)) }), 400, 'stale: a replay');
+  const forged = { ...f1, prev: 'a'.repeat(64) };
+  forged.chain = await link(forged.prev, 1, forged.dhash, forged.t);
+  assert.equal(await post(wb, { type: 'witness-frame', ...forged }), 409, 'frame #1 must start at genesis');
+
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1, extra: 1, to: wa.id }), 204);
+  const got = await a.until('witness-frame');
+  assert.deepEqual(got, { type: 'witness-frame', from: wb.id, name: 'Bo', ...f1 }, 'relayed exactly, extras stripped');
+  assert.equal(f1.prev, GENESIS);
+  const f2 = await frame(f1);
+  assert.equal(await post(wb, { type: 'witness-frame', ...f2 }), 429, 'one frame per 500 ms');
+  await new Promise((r) => setTimeout(r, 520));
+  assert.equal(await post(wb, { type: 'witness-frame', ...(await frame({ seq: 2, chain: f2.chain })) }), 409, 'a skipped frame breaks the chain');
+  assert.equal(await post(wb, { type: 'witness-frame', ...f2 }), 204);
+  assert.equal((await a.until('witness-frame')).seq, 2);
+  await new Promise((r) => setTimeout(r, 520));
+  assert.equal(await post(wb, { type: 'witness-frame', ...f2 }), 409, 'replayed');
+  assert.equal(await post(wb, { type: 'witness-frame', ...f1 }), 409, 'frame #1 can’t restart a running share’s chain');
+
+  assert.equal(await post(wb, { type: 'state', state: { screen: false } }), 204);
+  assert.equal(await post(wb, { type: 'state', state: { screen: true } }), 204);
+  await new Promise((r) => setTimeout(r, 520));
+  assert.equal(await post(wb, { type: 'witness-frame', ...(await frame(null)) }), 204, 'a new share starts a new chain');
+  [a, b].forEach((x) => x.close());
+  await settle('witness-room');
+});

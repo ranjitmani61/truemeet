@@ -7,6 +7,7 @@ import { readFile, readFileSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { fingerprint, proposalPayload, publicJwk, verify } from './public/ledger.js';
+import { GENESIS, frameShape, link, witnessPayload } from './public/witness.js';
 
 const PUBLIC = join(import.meta.dirname, 'public');
 const ROOM_RE = /^[a-z0-9-]{3,40}$/;
@@ -17,6 +18,8 @@ const PROPOSAL_RE = /^prop-\d{1,6}-[0-9a-f]{6}$/;
 const SIG_RE = /^[A-Za-z0-9_-]{86}$/; // raw 64-byte ECDSA P-256 signature, base64url
 const IMAGE_RE = /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/; // never SVG: no scriptable images
 const SURFACE_RE = /^(board|share:[0-9a-f-]{36})$/;
+const SHARE_RE = /^share:[0-9a-f-]{36}$/;
+const TPL_RE = /^[A-Za-z0-9_-]{342}$/; // a pin's 16×16 luma template: 256 bytes, base64url
 const COLOR_RE = /^(#[0-9a-f]{6}|hsl\(\d{1,3} \d{1,3}% \d{1,3}%\))$/i;
 const EMOJI = new Set(['👏', '❤️', '😂', '😮', '🎉', '👍']);
 const REASONS = new Set(['action item', 'deadline', 'decision', 'next step', 'todo', 'agreed', 'follow-up', 'reactions', 'crosstalk']);
@@ -30,6 +33,8 @@ const MAX_PROPOSALS = 50;
 const MAX_IMAGE = 200_000; // data-URL chars for a beamed frame or a snip card
 const TARGETED = new Set(['beam-snapshot', 'whisper']); // strictly one-to-one: never broadcast
 const SPEAK_GAP_MS = 2500; // "Speak to room": at most one synthesized reply per person every 2.5 s
+const WITNESS_GAP_MS = 500; // signed frames arrive every ~2 s; anything much faster is abuse
+const WITNESS_SKEW_MS = 30_000; // a signed frame's timestamp must be this close to the server's clock
 const CATCHUP_AFTER_MS = 30_000;
 const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.svg': 'image/svg+xml' };
 const ICE = {
@@ -95,7 +100,8 @@ const inkOp = (m) => {
     case 'pin': {
       const pid = nid(m.pid), x = unit(m.x), y = unit(m.y);
       if (!pid || x === undefined || y === undefined || (m.note !== undefined && typeof m.note !== 'string')) return;
-      return { s, op: 'pin', pid, x, y, note: str(m.note, 140) ?? '', color: COLOR_RE.test(m.color) ? m.color : '#a78bfa' };
+      if (m.tpl !== undefined && !(s !== 'board' && typeof m.tpl === 'string' && TPL_RE.test(m.tpl))) return; // living anchors: shared screens only
+      return { s, op: 'pin', pid, x, y, note: str(m.note, 140) ?? '', color: COLOR_RE.test(m.color) ? m.color : '#a78bfa', ...(m.tpl && { tpl: m.tpl }) };
     }
     case 'resolve': { const pid = nid(m.pid); return pid && { s, op: 'resolve', pid }; }
     case 'card': { // a snipped screen region placed on the whiteboard
@@ -131,6 +137,16 @@ const SCHEMA = {
   proposal: (m) => { const text = str(m.text, 280); return text ? { text } : undefined; },
   // A reply the sender wants every other browser to speak aloud (and show) in the given language.
   'speak-reply': (m) => { const text = str(m.text, 280), l = lang(m.lang); return text && l ? { text, lang: l } : undefined; },
+  // "Proposed move": a region of a shared screen shown lifted to a new place, for everyone.
+  'screen-patch': (m) => {
+    const s = typeof m.s === 'string' && SHARE_RE.test(m.s) ? m.s : undefined, patchId = nid(m.patchId);
+    if (!s || !patchId) return;
+    if (m.op === 'remove') return { s, op: 'remove', patchId };
+    const [sx, sy, sw, sh, tx, ty] = [m.sx, m.sy, m.sw, m.sh, m.tx, m.ty].map(unit), fits = (a, b) => a + b <= 1 + 1e-9;
+    if (m.op !== 'add' || [sx, sy, sw, sh, tx, ty].includes(undefined) || sw < 0.02 || sh < 0.02 || !fits(sx, sw) || !fits(sy, sh) || !fits(tx, sw) || !fits(ty, sh)) return;
+    return { s, op: 'add', patchId, sx, sy, sw, sh, tx, ty };
+  },
+  'witness-frame': (m) => (frameShape(m) && SIG_RE.test(m.sig) ? { seq: m.seq, t: m.t, dhash: m.dhash, prev: m.prev, chain: m.chain, sig: m.sig } : undefined),
   'proposal-sign': (m) => (typeof m.proposalId === 'string' && PROPOSAL_RE.test(m.proposalId) && typeof m.sig === 'string' && SIG_RE.test(m.sig) ? { proposalId: m.proposalId, sig: m.sig } : undefined),
 };
 
@@ -229,6 +245,21 @@ async function ledgerOp(room, peer, type, clean) {
   return 204;
 }
 
+// Proof-of-Frame: relay a sharer's signed frame only if it extends their chain and verifies.
+// Viewers check everything again; this keeps forged or replayed frames off the wire.
+async function witnessOp(room, peer, f) {
+  if (!peer.state.screen || !peer.jwk) return 409;
+  if (Date.now() - (peer.witnessAt ?? 0) < WITNESS_GAP_MS) return 429;
+  if (Math.abs(f.t - Date.now()) > WITNESS_SKEW_MS) return 400; // stale or from the future: a replay
+  const last = peer.witness;
+  if (f.seq === 1 ? last || f.prev !== GENESIS : !(last && f.seq === last.seq + 1 && f.prev === last.chain)) return 409; // #1 only opens a share
+  if (f.chain !== (await link(f.prev, f.seq, f.dhash, f.t)) || !(await verify(peer.jwk, witnessPayload({ room: room.id, ...f }), f.sig))) return 400;
+  peer.witness = { seq: f.seq, chain: f.chain };
+  peer.witnessAt = Date.now();
+  broadcast(room, { type: 'witness-frame', from: peer.id, name: peer.name, ...f }, peer);
+  return 204;
+}
+
 const dropIfEmpty = (room) => { if (!room.peers.size && !room.lobby.size && rooms.get(room.id) === room) rooms.delete(room.id); };
 const push = (list, item, max) => { list.push(item); if (list.length > max) list.shift(); };
 
@@ -286,7 +317,7 @@ async function signal(req, res) {
     const out = { type, from: peer.id, name: peer.name, ...clean }; // the server, not the client, says who sent it
 
     if (type === 'state') {
-      if (peer.state.screen && !clean.state.screen) room.pins.get(`share:${peer.id}`)?.items.clear(); // share ended
+      if (peer.state.screen && !clean.state.screen) { room.pins.get(`share:${peer.id}`)?.items.clear(); peer.witness = null; } // share ended
       peer.state = clean.state;
     } else if (type === 'caption' && clean.final) {
       push(room.captions, { nid: clean.nid, name: peer.name, text: clean.text, t: Date.now() }, MAX_CAPTIONS);
@@ -301,6 +332,15 @@ async function signal(req, res) {
     } else if (type === 'speak-reply') { // always for the whole room: a `to` field is ignored
       if (Date.now() - (peer.spokeAt ?? 0) < SPEAK_GAP_MS) return done(res, 429);
       peer.spokeAt = Date.now();
+      broadcast(room, out, peer);
+      return done(res, 204);
+    } else if (type === 'witness-frame') { // one at a time per sharer, so the chain check can't race itself
+      const run = (peer.witnessQ ?? Promise.resolve()).then(() => witnessOp(room, peer, clean));
+      peer.witnessQ = run.catch(() => {});
+      return done(res, await run.catch(() => 500));
+    } else if (type === 'screen-patch') { // like annotation: on a live share whose owner allows it; always room-wide
+      const owner = room.peers.get(clean.s.slice(6));
+      if (!owner?.state.screen || (owner !== peer && clean.op === 'add' && !owner.state.ink)) return done(res, 403);
       broadcast(room, out, peer);
       return done(res, 204);
     } else if (type === 'turn-queue') {

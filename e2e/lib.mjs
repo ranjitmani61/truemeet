@@ -42,6 +42,49 @@ const fakeVoices = (mode) => {
   });
 };
 
+// Replaces screen capture with a deterministic animated "screen" (a canvas stream through the real
+// WebRTC encoder): a document panel with text lines, a blue gradient panel with a magenta card, and
+// a distinctive orange badge the suite can glide, hide and show via window.__scene.
+const fakeScreen = () => {
+  const W = 1280, H = 720;
+  const scene = (window.__scene = { x: 0.25, y: 0.45, tx: 0.25, ty: 0.45, visible: true, speed: 0.4 });
+  scene.glide = (x, y) => Object.assign(scene, { tx: x, ty: y });
+  scene.jump = (x, y) => Object.assign(scene, { x, y, tx: x, ty: y });
+  const backdrop = () => {
+    const c = Object.assign(document.createElement('canvas'), { width: W, height: H }), g = c.getContext('2d');
+    g.fillStyle = '#e9edf5'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#ffffff'; g.fillRect(40, 40, 0.66 * W - 40, H - 80); // the document
+    let seed = 3;
+    const r = () => ((seed = (Math.imul(seed, 1103515245) + 12345) >>> 0) / 2 ** 32);
+    for (let y = 70; y < H - 60; y += 26) { g.fillStyle = y % 130 === 70 ? '#1f2937' : '#6b7280'; g.fillRect(70, y, 180 + r() * 520, 9); }
+    const grad = g.createLinearGradient(0, 0, 0, H); // a smooth panel: what a Coons plate must reproduce
+    grad.addColorStop(0, '#1e3a8a'); grad.addColorStop(1, '#0ea5e9');
+    g.fillStyle = grad; g.fillRect(0.72 * W, 0, 0.28 * W, H);
+    g.fillStyle = '#e11d9c'; g.fillRect(0.78 * W, 0.14 * H, 0.16 * W, 0.18 * H); // the card someone will propose moving
+    return c;
+  };
+  const badge = (g, cx, cy) => { // asymmetric, so there's exactly one way to match it
+    g.save(); g.translate(cx - 36, cy - 36);
+    g.fillStyle = '#ff8a00'; g.fillRect(0, 0, 72, 72);
+    g.fillStyle = '#111827'; g.beginPath(); g.arc(42, 40, 20, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ffffff'; g.fillRect(8, 8, 20, 14); g.fillRect(48, 34, 8, 8);
+    g.fillStyle = '#111827'; g.beginPath(); g.moveTo(6, 66); g.lineTo(30, 66); g.lineTo(6, 44); g.fill();
+    g.restore();
+  };
+  navigator.mediaDevices.getDisplayMedia = async () => {
+    const c = Object.assign(document.createElement('canvas'), { width: W, height: H }), g = c.getContext('2d'), bg = backdrop();
+    let last = performance.now();
+    setInterval(() => {
+      const now = performance.now(), step = (scene.speed * (now - last)) / 1000, dx = scene.tx - scene.x, dy = scene.ty - scene.y, d = Math.hypot(dx, dy);
+      last = now;
+      if (d <= step) { scene.x = scene.tx; scene.y = scene.ty; } else { scene.x += (dx / d) * step; scene.y += (dy / d) * step; }
+      g.drawImage(bg, 0, 0);
+      if (scene.visible) badge(g, scene.x * W, scene.y * H);
+    }, 33);
+    return c.captureStream(30);
+  };
+};
+
 export async function suite(name) {
   await new Promise((resolve) => server.listen(0, resolve));
   const base = `http://localhost:${server.address().port}`;
@@ -67,10 +110,11 @@ export async function suite(name) {
     errors,
     launch,
     wire,
-    async page(label, { speech, tts, viewport = VIEWPORT, browser: b = browser } = {}) {
+    async page(label, { speech, tts, screen, viewport = VIEWPORT, browser: b = browser } = {}) {
       const ctx = await b.newContext({ viewport, permissions: ['camera', 'microphone'], acceptDownloads: true });
       if (speech) await ctx.addInitScript(fakeSpeech, speech);
       if (tts) await ctx.addInitScript(fakeVoices, tts);
+      if (screen) await ctx.addInitScript(fakeScreen);
       return wire(await ctx.newPage(), label);
     },
     // A persistent profile (kept between runs) with background networking allowed, so Chrome can

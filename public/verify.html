@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Verify a meeting record · TrueMeet</title>
+  <meta name="description" content="Re-check the signed decisions and the signed screen witness in TrueMeet meeting notes, offline, in your browser.">
+  <meta name="theme-color" content="#05060b">
+  <link rel="icon" href="/icon.svg">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Space+Grotesk:wght@500;600;700&display=swap">
+  <link rel="stylesheet" href="/app.css">
+  <style>
+    .verify { max-width: 720px; margin: 0 auto; padding: 32px 16px 64px; }
+    .verify h1 { margin: 12px 0 8px; font-size: clamp(28px, 5vw, 40px); }
+    .verify .lede { margin: 0 0 28px; color: var(--muted); font-size: 16px; }
+    .drops { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; }
+    .drop { display: grid; gap: 4px; padding: 18px; border-radius: var(--r-lg); cursor: pointer; border: 1px dashed var(--line-strong); }
+    .drop:focus-within { border-color: var(--accent-line); box-shadow: 0 0 0 3px var(--accent-soft); }
+    .drop b { font-family: var(--font-display); font-size: 16px; }
+    .drop small { color: var(--muted); font-size: 13px; }
+    .drop input { margin-top: 10px; font-size: 13px; color: var(--muted); }
+    .drop input::file-selector-button { margin-right: 10px; padding: 7px 14px; border-radius: 10px; border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--text); font: 600 13px var(--font-ui); cursor: pointer; }
+    .drop input::file-selector-button:hover { background: var(--surface-3); }
+    .results { display: grid; gap: 10px; margin-top: 24px; }
+    .res { display: flex; gap: 12px; margin: 0; padding: 14px 16px; border-radius: var(--r-md); background: var(--surface-1); border: 1px solid var(--line); overflow-wrap: anywhere; }
+    .res > b { flex: none; display: grid; place-items: center; width: 24px; height: 24px; border-radius: 50%; font-size: 13px; }
+    .res.ok > b { background: rgba(52, 211, 153, .18); color: var(--ok-text); }
+    .res.bad > b { background: var(--danger-soft); color: var(--danger-text); }
+    .res.info > b { background: var(--accent-soft); color: var(--accent-text); }
+    .res small { display: block; margin-top: 2px; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <header class="nav"><a class="brand" href="/"><img class="mark" src="/icon.svg" alt="">TrueMeet</a></header>
+  <main class="verify">
+    <h1>Verify a meeting record</h1>
+    <p class="lede">Open the notes you downloaded from a meeting. Every decision signature and every signed screen frame is re-checked here, in your browser — nothing is uploaded. Add a saved frame to prove which signed moment it shows.</p>
+    <div class="drops">
+      <label class="drop glass"><b>Meeting notes</b><small>The .txt from “Download notes”</small><input type="file" id="notes" accept=".txt,text/plain"></label>
+      <label class="drop glass"><b>Screenshot (optional)</b><small>A frame saved from a shared screen’s witness badge</small><input type="file" id="shot" accept="image/png,image/jpeg,image/webp"></label>
+    </div>
+    <section id="out" class="results" aria-live="polite"></section>
+  </main>
+  <script type="module">
+    import { parseLedger, verifyLedger } from '/ledger.js';
+    import { WITNESS, frameHash, matchFrame, parseWitness, verifyWitness } from '/witness.js';
+    import { readLuma } from '/tracker.js';
+
+    const $ = (s) => document.querySelector(s);
+    let notes = null, shot = null;
+    const row = (kind, text, sub) => { // file contents are untrusted: text nodes only
+      const p = Object.assign(document.createElement('p'), { className: `res ${kind}` });
+      p.append(Object.assign(document.createElement('b'), { textContent: { ok: '✓', bad: '✕', info: 'i' }[kind] }), Object.assign(document.createElement('span'), { textContent: text }));
+      if (sub) p.lastChild.append(Object.assign(document.createElement('small'), { textContent: sub }));
+      return p;
+    };
+    const parse = (fn) => { try { return fn(notes); } catch { return 'damaged'; } };
+    const when = (t) => new Date(t).toLocaleString();
+
+    async function render() {
+      const out = [];
+      if (!notes) out.push(row('info', 'Open your meeting notes to begin.'));
+      else {
+        const ledger = parse(parseLedger), witness = parse(parseWitness);
+        if (ledger === 'damaged' || witness === 'damaged') out.push(row('bad', 'A machine-verifiable block in these notes is damaged.'));
+        if (ledger && ledger !== 'damaged') {
+          const v = await verifyLedger(ledger), sigs = v.proposals.flatMap((x) => x.signatures);
+          out.push(row(v.valid ? 'ok' : 'bad', `Decision ledger · ${v.proposals.length} proposal(s), ${sigs.length} signature(s) — ${v.valid ? 'every signature valid' : 'INVALID'}`,
+            sigs.map((x) => `${x.valid ? 'valid' : 'INVALID'} · ${x.name} · key ${x.fingerprint}`).join(' · ')));
+        }
+        if (witness && witness !== 'damaged') {
+          const v = await verifyWitness(witness);
+          for (const c of v.chains) {
+            const bad = c.frames.filter((f) => !f.valid).map((f) => `#${f.seq}`);
+            out.push(row(bad.length || !c.frames.length ? 'bad' : 'ok',
+              `Screen witness · ${c.name}’s screen · ${c.frames.length} signed frame(s) #${c.frames[0]?.seq}–#${c.frames.at(-1)?.seq} — ${bad.length ? `INVALID: ${bad.join(', ')}` : 'every signature and chain link valid'}`,
+              `Signing key ${c.fingerprint} — the key folded into the safety code`));
+          }
+          if (shot) {
+            const [best] = matchFrame(v, shot.hash, 64);
+            out.push(best && best.distance <= WITNESS.match
+              ? row('ok', `Screenshot matches signed frame #${best.seq} of ${best.name}’s screen`, `${best.distance} of 64 bits differ · signed ${when(best.t)} · key ${best.fingerprint}`)
+              : row('bad', 'Screenshot matches no signed frame', best ? `Closest: frame #${best.seq} at ${best.distance} of 64 bits (≤ ${WITNESS.match} needed)` : 'No valid signed frames to compare with'));
+          }
+        } else if (shot) out.push(row('info', 'These notes have no screen witness to compare the screenshot with.'));
+        if (!ledger && !witness) out.push(row('bad', 'No TrueMeet decision ledger or screen witness found in this file.'));
+      }
+      $('#out').replaceChildren(...out);
+    }
+
+    $('#notes').onchange = async (e) => { notes = (await e.target.files[0]?.text()) ?? null; render(); };
+    $('#shot').onchange = async (e) => {
+      const file = e.target.files[0];
+      shot = null;
+      if (file) {
+        const bmp = await createImageBitmap(file).catch(() => null);
+        if (bmp) { shot = { hash: frameHash(readLuma(bmp, ...WITNESS.read)) }; bmp.close(); }
+      }
+      render();
+    };
+    render();
+  </script>
+</body>
+</html>
