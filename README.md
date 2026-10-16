@@ -254,9 +254,3 @@ TrueMeet uses no third-party marks.
 - The name, two-ring logo, violet/cyan palette and floating control dock are original.
 - The product UI doesn't reference any other video-meeting brand.
 - Before a public launch, search the USPTO/EUIPO databases for "TrueMeet" and have counsel review. This note is not legal advice.
-
-## Research notes (zoom.com, via REA)
-
-Captured with REA `capture-browser-scenario` on public marketing pages, 2026-10-16. Used for feature research only; no code, assets or branding were copied.
-- **Observed**: free tier limited to 40 minutes and 100 participants. Headline features: AI notes, transcript panel, REC indicator, reactions, noise suppression, backgrounds and whiteboard.
-- **Zoom brand guidelines** ([explore.zoom.us/brandguidelines](https://explore.zoom.us/docs/en-us/brandguidelines.html)): Zoom's names, logos and icons need written permission to use. TrueMeet uses none of them.
