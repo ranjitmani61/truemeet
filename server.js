@@ -6,8 +6,10 @@ import { createServer } from 'node:http';
 import { createServer as createTlsServer } from 'node:https';
 import { readFile, readFileSync, realpathSync } from 'node:fs';
 import { extname, join, normalize, sep } from 'node:path';
-import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { pathToFileURL } from 'node:url';
+import { electedDirector } from './public/director.js';
 import { fingerprint, proposalPayload, publicJwk, verify } from './public/ledger.js';
 import { GENESIS, frameShape, link, witnessPayload } from './public/witness.js';
 
@@ -27,6 +29,18 @@ const EMOJI = new Set(['👏', '❤️', '😂', '😮', '🎉', '👍']);
 const REASONS = new Set(['action item', 'deadline', 'decision', 'next step', 'todo', 'agreed', 'follow-up', 'reactions', 'crosstalk']);
 const MAX_PEERS = 8; // ponytail: full-mesh WebRTC tops out around 8 people; put an SFU (LiveKit/mediasoup) behind this for bigger rooms
 const MAX_LOBBY = 20;
+const HOST = process.env.HOST || '127.0.0.1';
+const TRUST_PROXY = process.env.TRUST_PROXY === '1';
+const limit = (name, fallback) => {
+  const value = Number(process.env[name] ?? fallback);
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error(`${name} must be a positive integer.`);
+  return value;
+};
+const MAX_ROOMS = limit('MAX_ROOMS', 100);
+const MAX_CONNECTIONS = limit('MAX_CONNECTIONS', 400);
+const MAX_CONN_PER_IP = limit('MAX_CONN_PER_IP', 20);
+const SIGNAL_BURST = limit('SIGNAL_BURST', 120);
+const SIGNAL_RATE = limit('SIGNAL_RATE', 60); // ink is batched at ~25 messages/second
 const MAX_BODY = 256 * 1024;
 const MAX_PINS = 200; // per surface
 const MAX_CAPTIONS = 40;
@@ -42,11 +56,18 @@ const TYPES = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=
 const ICE = {
   iceServers: [
     { urls: process.env.STUN_URL ?? 'stun:stun.l.google.com:19302' },
-    ...(process.env.TURN_URL ? [{ urls: process.env.TURN_URL, username: process.env.TURN_USERNAME, credential: process.env.TURN_CREDENTIAL }] : []),
   ],
+};
+const sessionIce = (id) => {
+  if (!process.env.TURN_URL) return ICE.iceServers;
+  const username = process.env.TURN_SECRET ? `${Math.floor(Date.now() / 1000) + 4 * 60 * 60}:${id}` : process.env.TURN_USER ?? process.env.TURN_USERNAME;
+  const credential = process.env.TURN_SECRET ? createHmac('sha1', process.env.TURN_SECRET).update(username).digest('base64') : process.env.TURN_PASS ?? process.env.TURN_CREDENTIAL;
+  return [...ICE.iceServers, { urls: process.env.TURN_URL, username, credential }];
 };
 
 export const rooms = new Map();
+const connectionsByIp = new Map();
+let connections = 0;
 
 const write = (peer, msg) => peer.res.writableEnded || peer.res.write(`data: ${JSON.stringify(msg)}\n\n`);
 const broadcast = (room, msg, except) => { for (const p of room.peers.values()) if (p !== except) write(p, msg); };
@@ -153,11 +174,17 @@ const SCHEMA = {
 };
 
 // ---------- Rooms ----------
-function events(res, url) {
-  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive', 'x-accel-buffering': 'no' });
+function events(req, res, url) {
+  res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive', 'x-accel-buffering': 'no' });
   const fail = (reason) => res.end(`data: ${JSON.stringify({ type: 'error', reason })}\n\n`);
   const roomId = url.searchParams.get('room') ?? '';
   if (!ROOM_RE.test(roomId)) return fail('That meeting code is not valid.');
+  // Only trust the address appended by the immediate proxy, never a caller's earlier entries.
+  const forwarded = TRUST_PROXY && req.headers['x-forwarded-for']?.split(',').at(-1).trim();
+  const ip = (isIP(forwarded || '') ? forwarded : req.socket.remoteAddress).replace(/^::ffff:/, '');
+  if (connections >= MAX_CONNECTIONS) return fail('The server has reached its connection limit. Try again shortly.');
+  if ((connectionsByIp.get(ip) ?? 0) >= MAX_CONN_PER_IP) return fail('Too many connections from your IP address. Close another meeting and try again.');
+  if (!rooms.has(roomId) && rooms.size >= MAX_ROOMS) return fail('The server has reached its room limit. Try again shortly.');
   const room = rooms.get(roomId) ?? {
     id: roomId, peers: new Map(), lobby: new Map(), host: null, locked: false, waiting: false,
     started: null, pins: new Map(), captions: [], highlights: [], proposals: new Map(), seq: 0,
@@ -168,10 +195,15 @@ function events(res, url) {
   rooms.set(roomId, room);
 
   const name = (url.searchParams.get('name') ?? '').trim().slice(0, 40) || 'Guest';
-  const peer = { id: randomUUID(), key: randomBytes(16).toString('hex'), name, state: flags(), res };
+  const peer = { id: randomUUID(), key: randomBytes(16).toString('hex'), name, state: flags(), res, tokens: SIGNAL_BURST, rateAt: performance.now() };
+  connections++;
+  connectionsByIp.set(ip, (connectionsByIp.get(ip) ?? 0) + 1);
   const ping = setInterval(() => res.write(': ping\n\n'), 25_000);
-  res.on('close', () => {
+  res.once('close', () => {
     clearInterval(ping);
+    connections--;
+    const remaining = connectionsByIp.get(ip) - 1;
+    if (remaining) connectionsByIp.set(ip, remaining); else connectionsByIp.delete(ip);
     if (room.lobby.delete(peer.id)) { toHost(room, { type: 'knock-cancel', id: peer.id }); dropIfEmpty(room); } else leave(room, peer);
   });
 
@@ -189,7 +221,7 @@ function admit(room, peer, fromLobby) {
   const others = [...room.peers.values()].map(pub);
   room.peers.set(peer.id, peer);
   room.host ??= peer.id;
-  write(peer, { type: 'welcome', id: peer.id, key: peer.key, host: room.host, locked: room.locked, waiting: room.waiting, started: room.started, now, peers: others });
+  write(peer, { type: 'welcome', id: peer.id, key: peer.key, host: room.host, locked: room.locked, waiting: room.waiting, started: room.started, now, peers: others, iceServers: sessionIce(peer.id) });
   const pins = [...room.pins.values()].flatMap((surface) => [...surface.items.values()]);
   if (pins.length) write(peer, { type: 'pins', pins });
   if (room.proposals.size) write(peer, { type: 'ledger', proposals: [...room.proposals.values()].map(ledgerEntry) });
@@ -311,6 +343,11 @@ async function signal(req, res) {
   const room = rooms.get(msg?.room);
   const peer = room?.peers.get(msg.id);
   if (!peer || !keyOk(peer, msg.key)) return done(res, 403);
+  const now = performance.now();
+  peer.tokens = Math.min(SIGNAL_BURST, peer.tokens + (now - peer.rateAt) * SIGNAL_RATE / 1000);
+  peer.rateAt = now;
+  if (peer.tokens < 1) { res.setHeader('retry-after', '1'); return done(res, 429); }
+  peer.tokens--;
   const { type } = msg;
 
   if (Object.hasOwn(SCHEMA, type)) {
@@ -324,6 +361,7 @@ async function signal(req, res) {
     } else if (type === 'caption' && clean.final) {
       push(room.captions, { nid: clean.nid, name: peer.name, text: clean.text, t: Date.now() }, MAX_CAPTIONS);
     } else if (type === 'mark') {
+      if (clean.auto && electedDirector(room.peers.values()) !== peer.id) return done(res, 403);
       push(room.highlights, { nid: clean.nid, name: peer.name, context: clean.context, auto: clean.auto, reason: clean.reason, t: Date.now() }, MAX_HIGHLIGHTS);
     } else if (type === 'ink') {
       if (!inkAllowed(room, peer, clean)) return done(res, 403);
@@ -346,7 +384,7 @@ async function signal(req, res) {
       broadcast(room, out, peer);
       return done(res, 204);
     } else if (type === 'turn-queue') {
-      if (!peer.state.auto) return done(res, 403); // only an Auto-Mode director suggests turn order
+      if (electedDirector(room.peers.values()) !== peer.id) return done(res, 403);
       if (!clean.order.every((id) => room.peers.has(id))) return done(res, 400);
     }
 
@@ -420,13 +458,14 @@ function serve(res, pathname) {
 
 export function handler(req, res) {
   const url = new URL(req.url, 'http://localhost');
-  if (req.method === 'GET' && url.pathname === '/api/events') return events(res, url);
+  if (req.method === 'GET' && url.pathname === '/api/events') return events(req, res, url);
   if (req.method === 'POST' && url.pathname === '/api/signal') return signal(req, res);
   if (req.method === 'GET' && url.pathname === '/config') return done(res, 200, ICE);
   if (req.method === 'GET') return serve(res, url.pathname);
   done(res, 405);
 }
 
+if (!!process.env.TLS_CERT !== !!process.env.TLS_KEY) throw new Error('Set both TLS_CERT and TLS_KEY to enable HTTPS.');
 const tls = process.env.TLS_CERT && { cert: readFileSync(process.env.TLS_CERT), key: readFileSync(process.env.TLS_KEY) };
 export const server = tls ? createTlsServer(tls, handler) : createServer(handler);
 
@@ -434,14 +473,19 @@ export const server = tls ? createTlsServer(tls, handler) : createServer(handler
 // only exists from Node 24.2; without this fallback older Node exited silently, serving nothing.
 const isMain = import.meta.main ?? (() => { try { return pathToFileURL(realpathSync(process.argv[1])).href === import.meta.url; } catch { return false; } })();
 if (isMain) {
+  const loopback = HOST === 'localhost' || HOST === '::1' || (isIP(HOST) === 4 && HOST.startsWith('127.'));
+  if (!loopback && !tls && !TRUST_PROXY && process.env.ALLOW_INSECURE_HTTP !== '1') {
+    console.error(`Refusing to serve plain HTTP on ${HOST}. Enable HTTPS with TLS_CERT and TLS_KEY, set TRUST_PROXY=1 behind an HTTPS reverse proxy, or set ALLOW_INSECURE_HTTP=1 for local LAN testing. Use HOST=127.0.0.1 for local access.`);
+    process.exit(1);
+  }
   const chosen = process.env.PORT !== undefined; // a port you asked for is used or reported, never swapped
   let port = Number(process.env.PORT ?? 3000);
   server.on('error', (e) => {
     if (e.code !== 'EADDRINUSE') throw e;
-    if (!chosen && port < 3010) return server.listen(++port); // 3000 busy on this machine: take the next free one
+    if (!chosen && port < 3010) return server.listen(++port, HOST); // 3000 busy on this machine: take the next free one
     console.error(`Port ${port} is already in use by another app. Start TrueMeet on a free port, e.g.:\n  PORT=${port + 100} npm start`);
     process.exit(1);
   });
-  server.once('listening', () => console.log(`TrueMeet ready on ${tls ? 'https' : 'http'}://localhost:${server.address().port}`));
-  server.listen(port);
+  server.once('listening', () => console.log(`TrueMeet ready on ${tls ? 'https' : 'http'}://${HOST.includes(':') ? `[${HOST}]` : HOST}:${server.address().port}`));
+  server.listen(port, HOST);
 }

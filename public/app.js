@@ -3,7 +3,7 @@
 // Screen Time Machine, lean-in whispers, signed decision ledger, polite turn engine, snip-to-board,
 // living anchors (tracked pins), proposed moves, and the signed Proof-of-Frame witness.
 import { apply as inkApply, bindPointer, boardCards, containRect, createSurface, dropSurface, exportPng, fixedRect, newId, paintOverlay, penStrokes } from './ink.js';
-import { awayMonitor, burstDetector, chooseFocus, collisionDetector, crosstalkDetector, focusDirector, frameDiff, hesitationDetector, phraseTrigger, turnOrder } from './director.js';
+import { awayMonitor, burstDetector, chooseFocus, collisionDetector, crosstalkDetector, electedDirector, focusDirector, frameDiff, hesitationDetector, phraseTrigger, turnOrder } from './director.js';
 import { RING, agoLabel, captureFrame, cardSlot, createRing, cropToDataUrl, fitWithin, normRect } from './timemachine.js';
 import { LEDGER_BEGIN, LEDGER_END, b64u, canonical, createIdentity, fingerprint, proposalPayload, sign, verify, verifyLedger } from './ledger.js';
 import { TRACK, capture, createAnchor, dock, readLuma, track } from './tracker.js';
@@ -19,7 +19,7 @@ const store = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
 };
-const iceConfig = fetch('/config').then((r) => r.json()).catch(() => ({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] }));
+let iceConfig;
 const SR = window.SpeechRecognition ?? window.webkitSpeechRecognition;
 const EMOJI = ['👏', '❤️', '😂', '😮', '🎉', '👍'];
 const SPEAKING = 0.015; // ponytail: fixed voice-activity threshold; tune if active-speaker switching feels twitchy
@@ -76,7 +76,7 @@ const initials = (n) => n.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => [.
 const hue = (n) => { let h = 7; for (const c of n) h = (h * 31 + c.codePointAt(0)) >>> 0; return h % 360; };
 const myInk = () => `hsl(${hue(me.name)} 90% 66%)`;
 const seenNid = (n) => { if (!n) return false; if (seen.has(n)) return true; seen.add(n); return false; };
-const isDirector = () => me.auto && !!me.id && all().filter((p) => p.state.auto && idOf(p)).map(idOf).sort()[0] === me.id;
+const isDirector = () => me.auto && !!me.id && electedDirector(all().map((p) => ({ id: idOf(p), state: p.state }))) === me.id;
 const IS_MAC = /mac/i.test(navigator.userAgentData?.platform ?? navigator.platform); // "macOS" (Chromium) or "MacIntel"
 // What to tell someone whose camera, mic or screen was refused: macOS also asks, per app.
 const blocked = (what, pane) => `${what} blocked — allow it in Chrome’s address bar${IS_MAC ? `, and in System Settings → Privacy & Security → ${pane} (then restart Chrome)` : ''}`;
@@ -210,6 +210,7 @@ async function handle(m) {
 async function welcome(m) {
   if (me.id) resetPeers(); else { enterRoom(); chime(true); } // a second welcome means EventSource reconnected with a fresh identity
   Object.assign(me, { id: m.id, key: m.key });
+  iceConfig = { iceServers: m.iceServers };
   skew = Date.now() - m.now; // server→local clock offset, so everyone's timestamps line up
   started = m.started + skew;
   host = m.host;
@@ -224,7 +225,7 @@ async function welcome(m) {
 // ---------- Peers ----------
 async function addPeer(info, offer) {
   if (peers.has(info.id)) return peers.get(info.id);
-  const pc = new RTCPeerConnection(await iceConfig);
+  const pc = new RTCPeerConnection(iceConfig);
   const p = { id: info.id, name: info.name, state: info.state ?? {}, jwk: info.jwk ?? null, pc, stream: new MediaStream(), level: null, talk: 0, lastSpoke: 0, shareAt: info.state?.screen ? Date.now() : 0, inkAt: 0 };
   peers.set(p.id, p);
   makeTile(p);

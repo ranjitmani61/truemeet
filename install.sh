@@ -60,16 +60,32 @@ rm -rf "$DIR/app" && mv "$tmp/app" "$DIR/app"
 mkdir -p "$DIR/bin"
 cat > "$DIR/bin/truemeet" <<EOF
 #!/bin/sh
-# Starts TrueMeet on port 3000 (or \$PORT). Whatever else is listening there is stopped first.
+# Restarts only this installation's TrueMeet; other listeners are left running.
 port=\${PORT:-3000}
 if command -v lsof >/dev/null 2>&1; then pids=\$(lsof -ti "tcp:\$port" -sTCP:LISTEN 2>/dev/null)
 elif command -v fuser >/dev/null 2>&1; then pids=\$(fuser "\$port/tcp" 2>/dev/null)
 else pids=; fi
 if [ -n "\$pids" ]; then
-  for pid in \$pids; do name=\$(ps -o comm= -p "\$pid" 2>/dev/null); echo "Port \$port: stopping \${name:-a process} (PID \$pid)"; done
-  kill \$pids 2>/dev/null
-  i=0; while [ \$i -lt 30 ] && kill -0 \$pids 2>/dev/null; do sleep 0.1; i=\$((i + 1)); done
-  kill -9 \$pids 2>/dev/null
+  # Check every listener before stopping any of them; a script name alone is not proof.
+  for pid in \$pids; do
+    command=\$(ps -ww -o args= -p "\$pid" 2>/dev/null) || continue
+    case "\$command" in
+      "$NODE $DIR/app/server.js" | "$NODE $DIR/app/server.js "*) ;;
+      *) printf 'Port %s is already in use by %s (PID %s). Nothing was stopped. Set PORT to a free port.\n' "\$port" "\$command" "\$pid" >&2; exit 1 ;;
+    esac
+  done
+  for pid in \$pids; do
+    command=\$(ps -ww -o args= -p "\$pid" 2>/dev/null) || continue
+    case "\$command" in
+      "$NODE $DIR/app/server.js" | "$NODE $DIR/app/server.js "*)
+        echo "Port \$port: stopping TrueMeet (PID \$pid)"
+        kill "\$pid" 2>/dev/null || continue
+        i=0; while [ \$i -lt 30 ] && kill -0 "\$pid" 2>/dev/null; do sleep 0.1; i=\$((i + 1)); done
+        if kill -0 "\$pid" 2>/dev/null; then echo "TrueMeet (PID \$pid) did not stop. Choose another PORT or stop it manually." >&2; exit 1; fi
+        ;;
+      *) echo "Port \$port changed owners. Nothing was stopped. Choose another PORT." >&2; exit 1 ;;
+    esac
+  done
 fi
 PORT=\$port exec "$NODE" "$DIR/app/server.js" "\$@"
 EOF

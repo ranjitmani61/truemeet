@@ -50,10 +50,34 @@ try {
   Remove-Item -Recurse -Force (Join-Path $Dir 'app') -ErrorAction SilentlyContinue
   Move-Item $app.FullName (Join-Path $Dir 'app')
 
-  # The launcher takes port 3000 (or %PORT%): whatever else is listening there is stopped first.
+  # Verify the executable AND its first script argument before stopping a listener.
   $launcher = Join-Path $Dir 'truemeet.cmd'
-  $free = 'Get-NetTCPConnection -LocalPort $env:PORT -State Listen -ErrorAction SilentlyContinue | ForEach-Object { $p = Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue; if ($p) { Write-Host (''Port '' + $env:PORT + '': stopping '' + $p.ProcessName + '' (PID '' + $p.Id + '')''); Stop-Process -Id $p.Id -Force } }'
-  Set-Content $launcher "@echo off`r`nif not defined PORT set PORT=3000`r`npowershell -NoProfile -Command `"$free`"`r`n`"$node`" `"$(Join-Path $Dir 'app\server.js')`" %*" -Encoding ASCII
+  $launch = @'
+$ErrorActionPreference = 'Stop'
+if (-not $env:PORT) { $env:PORT = '3000' }
+$node = '__NODE__'
+$server = '__SERVER__'
+$command = '^(?:"' + [regex]::Escape($node) + '"|' + [regex]::Escape($node) + ')\s+(?:"' + [regex]::Escape($server) + '"|' + [regex]::Escape($server) + ')(?:\s|$)'
+$owners = @(Get-NetTCPConnection -LocalPort $env:PORT -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique)
+foreach ($owner in $owners) {
+  $p = Get-CimInstance Win32_Process -Filter "ProcessId = $owner"
+  if ($p -and ($p.ExecutablePath -ne $node -or $p.CommandLine -notmatch $command)) {
+    throw "Port $env:PORT is already in use by $($p.Name) (PID $owner). Nothing was stopped. Set PORT to a free port."
+  }
+}
+foreach ($owner in $owners) {
+  $p = Get-CimInstance Win32_Process -Filter "ProcessId = $owner"
+  if (-not $p) { continue }
+  if ($p.ExecutablePath -ne $node -or $p.CommandLine -notmatch $command) { throw "Port $env:PORT changed owners. Nothing was stopped. Choose another PORT." }
+  Write-Host "Port $env:PORT`: stopping TrueMeet (PID $owner)"
+  Stop-Process -Id $owner -Force
+}
+& $node $server @args
+exit $LASTEXITCODE
+'@
+  $launch = $launch.Replace('__NODE__', $node.Replace("'", "''")).Replace('__SERVER__', (Join-Path $Dir 'app\server.js').Replace("'", "''"))
+  Set-Content (Join-Path $Dir 'truemeet.ps1') $launch -Encoding UTF8
+  Set-Content $launcher '@echo off', 'powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0truemeet.ps1" %*' -Encoding ASCII
   Say "Installed. Start it any time with: $launcher"
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

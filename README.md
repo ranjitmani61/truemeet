@@ -10,11 +10,11 @@ Audio and video go directly between participants (WebRTC, DTLS-SRTP), and the se
 | macOS, Linux | `curl -fsSL https://raw.githubusercontent.com/ranjitmani61/truemeet/main/install.sh \| sh` |
 | Windows (PowerShell) | `irm https://raw.githubusercontent.com/ranjitmani61/truemeet/main/install.ps1 \| iex` |
 | Anything with Node.js 20.11+ | `npx github:ranjitmani61/truemeet` |
-| Anything with Docker | `docker build -t truemeet https://github.com/ranjitmani61/truemeet.git && docker run -p 3000:3000 truemeet` |
+| Anything with Docker (local use) | `docker build -t truemeet https://github.com/ranjitmani61/truemeet.git && docker run -p 127.0.0.1:3000:3000 -e ALLOW_INSECURE_HTTP=1 truemeet` |
 
 - **What the installers do:** they need no admin rights, and everything stays in `~/.truemeet` (or `%LOCALAPPDATA%\TrueMeet` on Windows). They use your Node.js if it is 20.11 or newer. Otherwise they download a private copy, x64 or arm64, verified against nodejs.org's published SHA-256 sums. Then they install TrueMeet and start it.
 - **Update:** run the same command again. **Uninstall:** delete that folder.
-- **Address:** always http://localhost:3000. The `truemeet` launcher stops whatever else is listening on port 3000 first and says what it stopped. Set `PORT` to use another port.
+- **Address:** http://127.0.0.1:3000. The `truemeet` launcher restarts only a verified TrueMeet process from the same installation. If another application owns the port, it reports the conflict and exits. Set `PORT` to use another port.
 - **Other devices** on your network need HTTPS for camera and mic; see *Deploying beyond localhost*.
 - **Tested:**
   - The Linux installer, in a clean Debian container with no Node.js.
@@ -171,11 +171,35 @@ Requires Node.js 20.11 or later (tested on 20, 22 and 24). It has no npm depende
 
 Camera and microphone access needs HTTPS. Peers behind strict NATs also need a TURN server.
 
+Run TrueMeet on an unprivileged loopback port, with Caddy or Nginx terminating HTTPS on port 443:
+
 ```bash
-TLS_CERT=cert.pem TLS_KEY=key.pem PORT=443 \
-TURN_URL=turn:turn.example.com:3478 TURN_USERNAME=user TURN_CREDENTIAL=secret \
+PORT=3000 HOST=127.0.0.1 npm start
+```
+
+For example, a Caddyfile (Caddy obtains and renews the certificate):
+
+```caddyfile
+meet.example.com {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+With Nginx, terminate TLS in its port 443 server block, proxy to `http://127.0.0.1:3000`, and use `proxy_buffering off` for SSE. Set `TRUST_PROXY=1` on TrueMeet to use the immediate proxy's last `X-Forwarded-For` address for per-IP limits; the proxy must append or overwrite that header and direct access to TrueMeet must be restricted. In Docker, use `-p 127.0.0.1:3000:3000 -e TRUST_PROXY=1` behind the HTTPS proxy.
+
+Direct HTTPS is also supported:
+
+```bash
+HOST=0.0.0.0 PORT=8443 TLS_CERT=cert.pem TLS_KEY=key.pem \
+TURN_URL=turn:turn.example.com:3478 TURN_SECRET=your-coturn-shared-secret \
 npm start
 ```
+
+Binding directly to port 443 on Linux requires `CAP_NET_BIND_SERVICE`; using a higher port such as 8443 avoids that privilege. Plain HTTP defaults to `HOST=127.0.0.1`. A non-loopback HTTP bind requires `TRUST_PROXY=1` behind an HTTPS reverse proxy, or an explicit `ALLOW_INSECURE_HTTP=1` for local LAN testing (browsers still require HTTPS for camera/mic on LAN addresses).
+
+TURN credentials are sent only in an admitted participant's `welcome`, never in public `/config` responses or waiting-room knocks. `TURN_SECRET` uses [coturn's REST authentication](https://github.com/coturn/coturn/wiki/turnserver#turn-rest-api): configure coturn with the same shared secret, and TrueMeet issues a peer-specific username and HMAC credential valid for four hours. Static `TURN_USER` / `TURN_PASS` are also supported, including the legacy names `TURN_USERNAME` / `TURN_CREDENTIAL`.
+
+Resource limits default to `MAX_ROOMS=100`, `MAX_CONNECTIONS=400` (admitted and waiting streams combined), and `MAX_CONN_PER_IP=20`. Signaling uses a per-participant token bucket with `SIGNAL_BURST=120` and `SIGNAL_RATE=60` messages per second; excess messages return HTTP 429. Each setting accepts a positive integer.
 
 ## Design
 
@@ -213,6 +237,8 @@ npm start
   - Auto-highlight relay and caption buffering.
   - Late-joiner catch-up, both from the waiting room and after 30 seconds.
   - Schema stripping.
+  - Network security: loopback binding, explicit HTTP opt-ins, room/connection/IP caps and cleanup, per-peer message bursts and refill, authoritative Auto-Mode election, and admitted-only static/ephemeral TURN credentials.
+  - Installer safety: the generated POSIX launcher preserves unrelated Node servers and restarts its own installation. PowerShell parsing and mocked Windows process checks run when `pwsh` / `powershell` is installed (or `POWERSHELL=/path/to/executable` is set).
   - Living anchors (`tracker.test.js`), on synthetic moving frames with codec-like noise:
     - follows a translating feature to within 0.6 px
     - goes `occluded` when the feature is gone, and re-locks when it returns elsewhere

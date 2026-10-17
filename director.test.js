@@ -1,6 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { KEEP, awayMonitor, burstDetector, chooseFocus, collisionDetector, crosstalkDetector, focusDirector, frameDiff, hesitationDetector, phraseTrigger, turnOrder } from './public/director.js';
+import { KEEP, awayMonitor, burstDetector, chooseFocus, collisionDetector, crosstalkDetector, electedDirector, focusDirector, frameDiff, hesitationDetector, phraseTrigger, turnOrder } from './public/director.js';
+
+test('director election: lowest connected Auto-Mode id, independent of join order', () => {
+  const peers = new Map([
+    ['c', { id: 'c', state: { auto: true } }],
+    ['a', { id: 'a', state: { auto: false } }],
+    ['b', { id: 'b', state: { auto: true } }],
+    ['pending', { id: null, state: { auto: true } }],
+  ]);
+  assert.equal(electedDirector(peers.values()), 'b');
+  peers.get('a').state.auto = true;
+  assert.equal(electedDirector(peers.values()), 'a');
+  peers.delete('a');
+  assert.equal(electedDirector(peers.values()), 'b', 'disconnect elects the next director');
+  peers.get('b').state.auto = false;
+  assert.equal(electedDirector(peers.values()), 'c', 'opting out elects the next director');
+  peers.get('c').state.auto = false;
+  assert.equal(electedDirector(peers.values()), null);
+  assert.equal(electedDirector([]), null);
+});
 
 test('phrase triggers', () => {
   assert.equal(phraseTrigger('Action item: Leo ships the deck'), 'action item');

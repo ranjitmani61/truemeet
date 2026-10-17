@@ -3,6 +3,9 @@
 
 export const KEEP = Symbol('keep current focus');
 
+// One shared election rule for the browser and the signaling authority.
+export const electedDirector = (peers) => [...peers].filter((p) => p.state.auto === true && p.id).map((p) => p.id).sort()[0] ?? null;
+
 // High-signal phrases → highlight reason. Matching is case-insensitive on whole words.
 const TRIGGERS = [
   ['action item', /\baction items?\b/],

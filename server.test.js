@@ -152,6 +152,7 @@ test('pins: server numbers them, author or sharer resolves, malformed rejected',
 test('highlights + captions: relayed sanitised and replayed as catch-up for late joiners', async () => {
   const post = poster('cu-room');
   const a = open('cu-room', 'Ana'), wa = await a.next();
+  assert.equal(await post(wa, { type: 'state', state: { auto: true } }), 204);
   assert.equal(await post(wa, { type: 'mark', auto: true, reason: 'decision', context: 'Ana: “let’s decide on Friday”', nid: 'h1', extra: 'x' }), 204);
   assert.equal(await post(wa, { type: 'mark', auto: true, reason: 'gossip', context: 'x' }), 400, 'unknown auto reason rejected');
   assert.equal(await post(wa, { type: 'mark', context: { evil: true } }), 400, 'context must be text');
@@ -178,6 +179,34 @@ test('highlights + captions: relayed sanitised and replayed as catch-up for late
   [a, b, c].forEach((x) => x.close());
   await settle('cu-room');
   assert.ok(!rooms.has('cu-room'), 'buffers vanish with the room');
+});
+
+test('auto-highlights: only the elected director may publish, including after opt-out or disconnect', async (t) => {
+  const room = 'director-room', post = poster(room);
+  const a = open(room, 'Ana'), wa = await a.next();
+  const b = open(room, 'Bo'), wb = await b.next();
+  const c = open(room, 'Cy'), wc = await c.next();
+  t.after(async () => { [a, b, c].forEach((p) => p.close()); await settle(room); });
+  const mark = { type: 'mark', auto: true, reason: 'decision', context: 'Forged', nid: 'forged' };
+  assert.equal(await post(wa, mark), 403, 'no director before Auto-Mode is enabled');
+  for (const who of [wa, wb]) assert.equal(await post(who, { type: 'state', state: { auto: true } }), 204);
+  const [director, other] = [wa, wb].sort((x, y) => x.id < y.id ? -1 : 1);
+  assert.equal(await post(other, { ...mark, from: director.id }), 403, 'an Auto-Mode peer cannot forge the elected director');
+  assert.equal(await post(wc, mark), 403, 'an ordinary participant cannot forge an auto-highlight');
+  assert.equal(rooms.get(room).highlights.length, 0, 'rejected marks never enter catch-up');
+  assert.equal(await post(other, { type: 'turn-queue', order: [wa.id, wb.id] }), 403, 'turn order uses the same election');
+  assert.equal(await post(director, { ...mark, context: 'Elected', nid: 'elected' }), 204);
+  assert.equal((await c.until('mark')).context, 'Elected', 'only the accepted mark was relayed');
+  assert.equal(await post(other, { type: 'mark', context: 'Manual' }), 204, 'manual highlights remain available');
+
+  assert.equal(await post(director, { type: 'state', state: { auto: false } }), 204);
+  assert.equal(await post(director, mark), 403, 'former director opted out');
+  assert.equal(await post(other, mark), 204, 'the remaining Auto-Mode peer takes over');
+  assert.equal(await post(director, { type: 'state', state: { auto: true } }), 204);
+  assert.equal(await post(other, mark), 403, 'the lower id wins again');
+  (director.id === wa.id ? a : b).close();
+  await c.until('leave');
+  assert.equal(await post(other, mark), 204, 'disconnect immediately transfers authority');
 });
 
 const JPEG = `data:image/jpeg;base64,${Buffer.from('fake-jpeg-bytes').toString('base64')}`;
