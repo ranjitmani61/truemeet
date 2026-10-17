@@ -1,6 +1,6 @@
 // Original two-person meeting: lobby → join → live video both ways → hand, chat, reactions →
 // host mute-all → camera off → speaker view → phone layout → host removes guest.
-import { assert, join, liveVideo, openPanel, suite } from './lib.mjs';
+import { assert, liveVideo, openPanel, suite } from './lib.mjs';
 
 const t = await suite('two-person meeting');
 const a = await t.page('A');
@@ -17,10 +17,23 @@ await a.click('#joinBtn');
 await a.waitForSelector('#room:not([hidden])');
 
 const b = await t.page('B');
-await join(b, t.base + room, 'Grace Hopper');
+// A pasted invite must take Grace to Ada's server, even when her home page has another origin.
+const otherOrigin = t.base.replace('localhost', '127.0.0.1');
+await b.goto(otherOrigin);
+await b.waitForSelector('#home:not([hidden])');
+await b.fill('#joinCode', 'javascript:alert(1)');
+await b.press('#joinCode', 'Enter');
+await b.waitForFunction(() => document.querySelector('#toasts').textContent.includes('Use an http:// or https:// meeting link'));
+assert.equal(new URL(b.url()).origin, otherOrigin, 'non-HTTP links cannot navigate or execute');
+await b.fill('#joinCode', t.base + room);
+await Promise.all([b.waitForURL(t.base + room), b.press('#joinCode', 'Enter')]);
+await b.waitForSelector('#lobby:not([hidden])');
+await b.waitForTimeout(700);
+await b.fill('#name', 'Grace Hopper');
+await b.click('#joinBtn');
 await b.waitForSelector('#room:not([hidden])');
 await Promise.all([liveVideo(a), liveVideo(b)]);
-t.step('both sides see live video');
+t.step('pasted invite preserved the server address; both sides see live video');
 
 await b.click('#handBtn');
 await b.click('#chatBtn');

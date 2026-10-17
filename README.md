@@ -15,7 +15,7 @@ Audio and video go directly between participants (WebRTC, DTLS-SRTP), and the se
 - **What the installers do:** they need no admin rights, and everything stays in `~/.truemeet` (or `%LOCALAPPDATA%\TrueMeet` on Windows). They use your Node.js if it is 20.11 or newer. Otherwise they download a private copy, x64 or arm64, verified against nodejs.org's published SHA-256 sums. Then they install TrueMeet and start it.
 - **Update:** run the same command again. **Uninstall:** delete that folder.
 - **Address:** http://127.0.0.1:3000. The `truemeet` launcher restarts only a verified TrueMeet process from the same installation. If another application owns the port, it reports the conflict and exits. Set `PORT` to use another port.
-- **Other devices** on your network need HTTPS for camera and mic; see *Deploying beyond localhost*.
+- **Other devices:** run one shared TrueMeet server and open its full invite link in each browser. Meeting codes belong to that server. HTTPS is needed for camera and mic; see *Deploying beyond localhost*.
 - **Tested:**
   - The Linux installer, in a clean Debian container with no Node.js.
   - The Docker image.
@@ -168,6 +168,10 @@ Requires Node.js 20.11 or later (tested on 20, 22 and 24). It has no npm depende
 **Keyboard shortcuts:** M mic · V camera · S share · W whiteboard · A Auto-Mode · H hand · L captions · B highlight · C chat · P people · Esc stop annotating.
 
 ## Deploying beyond localhost
+
+All participants must connect to the same TrueMeet server. Running `npx github:ranjitmani61/truemeet` or `npm start` independently on two computers creates separate sets of rooms, even with the same meeting code. The second computer joins by opening the first server's full network invite link in its browser.
+
+`localhost` and `127.0.0.1` always refer to the computer running that browser. For two computers on the same Wi-Fi/LAN, use the hosting computer's LAN address and trusted HTTPS, for example `https://192.168.1.20:8443/vvh-kxzw-gdv`. Configure TLS as below with a certificate trusted by both computers. Open that network address on the host too before copying its invite. Pasting a full invite link preserves its server address; a bare code joins the server currently open in your browser.
 
 Camera and microphone access needs HTTPS. Peers behind strict NATs also need a TURN server.
 

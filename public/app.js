@@ -2098,10 +2098,17 @@ on('.new-meeting', () => go(`/${newCode()}`));
 $('#joinForm').onsubmit = (e) => {
   e.preventDefault();
   const raw = $('#joinCode').value.trim();
-  let code = raw;
-  try { code = new URL(raw).pathname.slice(1); } catch {}
+  let code = raw, origin = location.origin;
+  try {
+    const url = new URL(raw);
+    if (!['http:', 'https:'].includes(url.protocol)) return toast('Use an http:// or https:// meeting link');
+    origin = url.origin;
+    code = url.pathname.slice(1);
+  } catch {}
   code = code.toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 40);
-  if (code.length >= 3) go(`/${code}`); else toast('Enter a meeting code like abc-defg-hij');
+  if (code.length < 3) return toast('Enter a meeting code like abc-defg-hij');
+  if (origin !== location.origin) return location.assign(`${origin}/${code}`);
+  go(`/${code}`);
 };
 $('#lobbyForm').onsubmit = (e) => {
   e.preventDefault();
